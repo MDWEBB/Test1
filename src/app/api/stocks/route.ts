@@ -1,18 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 
-interface YahooQuoteResult {
+interface YahooChartMeta {
   symbol?: string;
   shortName?: string;
   longName?: string;
   regularMarketPrice?: number;
-  regularMarketChange?: number;
-  regularMarketChangePercent?: number;
+  chartPreviousClose?: number;
   regularMarketDayHigh?: number;
   regularMarketDayLow?: number;
   regularMarketVolume?: number;
   marketCap?: number;
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
+}
+
+async function fetchQuoteViaChart(symbol: string): Promise<YahooChartMeta | null> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const meta = data?.chart?.result?.[0]?.meta;
+    if (!meta) return null;
+    return meta as YahooChartMeta;
+  } catch {
+    return null;
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -25,36 +43,40 @@ export async function GET(request: NextRequest) {
   const symbols = tickers.split(",").map((t) => t.trim().toUpperCase());
 
   try {
-    // Yahoo Finance uses .AX suffix for ASX-listed stocks
-    const yahooSymbols = symbols.map((s) => s);
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yahooSymbols.join(",")}`;
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-      },
-      next: { revalidate: 30 },
+    // Fetch each symbol via the v8 chart endpoint (still works without auth)
+    const chartResults = await Promise.all(symbols.map(fetchQuoteViaChart));
+
+    const quotes = symbols.map((symbol, i) => {
+      const meta = chartResults[i];
+      if (!meta) return null;
+
+      const price = meta.regularMarketPrice || 0;
+      const prevClose = meta.chartPreviousClose || price;
+      const change = price - prevClose;
+      const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+
+      return {
+        ticker: meta.symbol || symbol,
+        name: meta.shortName || meta.longName || symbol,
+        price,
+        change,
+        changePercent,
+        dayHigh: meta.regularMarketDayHigh || price,
+        dayLow: meta.regularMarketDayLow || price,
+        volume: meta.regularMarketVolume || 0,
+        marketCap: meta.marketCap,
+        fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh,
+        fiftyTwoWeekLow: meta.fiftyTwoWeekLow,
+      };
     });
 
-    if (!res.ok) {
-      throw new Error(`Yahoo Finance API returned ${res.status}`);
+    const validQuotes = quotes.filter(Boolean);
+
+    if (validQuotes.length > 0) {
+      return NextResponse.json({ quotes: validQuotes });
     }
 
-    const data = await res.json();
-    const results = (data.quoteResponse?.result || []).map((q: YahooQuoteResult) => ({
-      ticker: q.symbol || "",
-      name: q.shortName || q.longName || q.symbol || "",
-      price: q.regularMarketPrice || 0,
-      change: q.regularMarketChange || 0,
-      changePercent: q.regularMarketChangePercent || 0,
-      dayHigh: q.regularMarketDayHigh || 0,
-      dayLow: q.regularMarketDayLow || 0,
-      volume: q.regularMarketVolume || 0,
-      marketCap: q.marketCap,
-      fiftyTwoWeekHigh: q.fiftyTwoWeekHigh,
-      fiftyTwoWeekLow: q.fiftyTwoWeekLow,
-    }));
-
-    return NextResponse.json({ quotes: results });
+    throw new Error("No valid quotes returned");
   } catch (error) {
     console.error("Stock API error:", error);
     // Return mock data as fallback so the app is still usable

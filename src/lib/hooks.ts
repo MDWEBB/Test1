@@ -1,23 +1,34 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { StockQuote, NewsArticle, HoldingWithQuote, PortfolioSummary } from "./types";
 import { usePortfolio } from "./portfolio-context";
 
-export function useStockQuotes(tickers: string[], refreshInterval = 60000) {
+// Refresh every 5 minutes (300s) instead of 60s to be gentle on slow machines
+const DEFAULT_REFRESH_INTERVAL = 300000;
+
+export function useStockQuotes(tickers: string[], refreshInterval = DEFAULT_REFRESH_INTERVAL) {
   const [quotes, setQuotes] = useState<Record<string, StockQuote>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMock, setIsMock] = useState(false);
+  const failCount = useRef(0);
 
   const fetchQuotes = useCallback(async () => {
     if (tickers.length === 0) return;
+    // Stop polling after 3 consecutive failures to avoid hammering
+    if (failCount.current >= 3) return;
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/stocks?tickers=${tickers.join(",")}`);
       const data = await res.json();
-      if (data.isMock) setIsMock(true);
+      if (data.isMock) {
+        setIsMock(true);
+        failCount.current += 1;
+      } else {
+        failCount.current = 0;
+      }
       const map: Record<string, StockQuote> = {};
       for (const q of data.quotes || []) {
         map[q.ticker] = q;
@@ -25,12 +36,14 @@ export function useStockQuotes(tickers: string[], refreshInterval = 60000) {
       setQuotes(map);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch quotes");
+      failCount.current += 1;
     } finally {
       setLoading(false);
     }
   }, [tickers]);
 
   useEffect(() => {
+    failCount.current = 0;
     fetchQuotes();
     const interval = setInterval(fetchQuotes, refreshInterval);
     return () => clearInterval(interval);
