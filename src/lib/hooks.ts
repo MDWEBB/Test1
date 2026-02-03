@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { StockQuote, NewsArticle, HoldingWithQuote, PortfolioSummary } from "./types";
 import { usePortfolio } from "./portfolio-context";
 
@@ -12,49 +12,74 @@ export function useStockQuotes(tickers: string[], refreshInterval = DEFAULT_REFR
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMock, setIsMock] = useState(false);
+
+  // All mutable tracking lives in refs to avoid triggering re-renders
   const failCount = useRef(0);
+  const isFetching = useRef(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tickersRef = useRef(tickers.join(","));
 
-  // Stabilise the tickers identity so useCallback/useEffect don't loop.
-  // Arrays are new references every render; a joined string is stable.
+  // Derive a stable key; only update the ref when it actually changes
   const tickersKey = tickers.join(",");
-  const stableTickers = useMemo(() => tickers, [tickersKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const fetchQuotes = useCallback(async () => {
-    if (stableTickers.length === 0) return;
-    // Stop polling after 3 consecutive failures to avoid hammering
-    if (failCount.current >= 3) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/stocks?tickers=${stableTickers.join(",")}`);
-      const data = await res.json();
-      if (data.isMock) {
-        setIsMock(true);
-        failCount.current += 1;
-      } else {
-        failCount.current = 0;
-      }
-      const map: Record<string, StockQuote> = {};
-      for (const q of data.quotes || []) {
-        map[q.ticker] = q;
-      }
-      setQuotes(map);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to fetch quotes");
-      failCount.current += 1;
-    } finally {
-      setLoading(false);
-    }
-  }, [stableTickers]);
+  if (tickersKey !== tickersRef.current) {
+    tickersRef.current = tickersKey;
+    failCount.current = 0; // reset failures when tickers change
+  }
 
   useEffect(() => {
-    failCount.current = 0;
-    fetchQuotes();
-    const interval = setInterval(fetchQuotes, refreshInterval);
-    return () => clearInterval(interval);
-  }, [fetchQuotes, refreshInterval]);
+    // The actual fetch function — reads everything from refs, no closure deps
+    async function doFetch() {
+      const key = tickersRef.current;
+      if (!key) return;
+      if (failCount.current >= 3) return;
+      if (isFetching.current) return; // prevent overlapping fetches
 
-  return { quotes, loading, error, isMock, refetch: fetchQuotes };
+      isFetching.current = true;
+      setLoading(true);
+      setError(null);
+
+      try {
+        const res = await fetch(`/api/stocks?tickers=${key}`);
+        const data = await res.json();
+        if (data.isMock) {
+          setIsMock(true);
+          failCount.current += 1;
+        } else {
+          failCount.current = 0;
+        }
+        const map: Record<string, StockQuote> = {};
+        for (const q of data.quotes || []) {
+          map[q.ticker] = q;
+        }
+        setQuotes(map);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to fetch quotes");
+        failCount.current += 1;
+      } finally {
+        setLoading(false);
+        isFetching.current = false;
+      }
+    }
+
+    // Initial fetch
+    doFetch();
+
+    // Set up polling interval
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(doFetch, refreshInterval);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+    // tickersKey is the ONLY thing that should restart the effect.
+    // refreshInterval changes are rare (prop-level).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickersKey, refreshInterval]);
+
+  return { quotes, loading, error, isMock };
 }
 
 // Convert ticker to Yahoo Finance format (ASX stocks need .AX suffix)
