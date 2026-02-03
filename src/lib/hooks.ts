@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { StockQuote, NewsArticle, HoldingWithQuote, PortfolioSummary } from "./types";
 import { usePortfolio } from "./portfolio-context";
 
-// Refresh every 5 minutes (300s) instead of 60s to be gentle on slow machines
+// Refresh every 5 minutes (300s) to be gentle on slow machines
 const DEFAULT_REFRESH_INTERVAL = 300000;
 
 export function useStockQuotes(tickers: string[], refreshInterval = DEFAULT_REFRESH_INTERVAL) {
@@ -14,14 +14,19 @@ export function useStockQuotes(tickers: string[], refreshInterval = DEFAULT_REFR
   const [isMock, setIsMock] = useState(false);
   const failCount = useRef(0);
 
+  // Stabilise the tickers identity so useCallback/useEffect don't loop.
+  // Arrays are new references every render; a joined string is stable.
+  const tickersKey = tickers.join(",");
+  const stableTickers = useMemo(() => tickers, [tickersKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchQuotes = useCallback(async () => {
-    if (tickers.length === 0) return;
+    if (stableTickers.length === 0) return;
     // Stop polling after 3 consecutive failures to avoid hammering
     if (failCount.current >= 3) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/stocks?tickers=${tickers.join(",")}`);
+      const res = await fetch(`/api/stocks?tickers=${stableTickers.join(",")}`);
       const data = await res.json();
       if (data.isMock) {
         setIsMock(true);
@@ -40,7 +45,7 @@ export function useStockQuotes(tickers: string[], refreshInterval = DEFAULT_REFR
     } finally {
       setLoading(false);
     }
-  }, [tickers]);
+  }, [stableTickers]);
 
   useEffect(() => {
     failCount.current = 0;
