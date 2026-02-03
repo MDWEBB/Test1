@@ -39,13 +39,25 @@ export function useStockQuotes(tickers: string[], refreshInterval = 60000) {
   return { quotes, loading, error, isMock, refetch: fetchQuotes };
 }
 
+// Convert ticker to Yahoo Finance format (ASX stocks need .AX suffix)
+export function toYahooTicker(ticker: string, market: string): string {
+  if (market === "ASX") return `${ticker}.AX`;
+  return ticker;
+}
+
+// Convert Yahoo Finance ticker back to display ticker
+function fromYahooTicker(yahooTicker: string): string {
+  return yahooTicker.replace(/\.AX$/, "");
+}
+
 export function usePortfolioSummary(): PortfolioSummary & { loading: boolean; isMock: boolean } {
   const { holdings } = usePortfolio();
-  const tickers = holdings.map((h) => h.ticker);
+  const tickers = holdings.map((h) => toYahooTicker(h.ticker, h.market || "US"));
   const { quotes, loading, isMock } = useStockQuotes(tickers);
 
   const holdingsWithQuotes: HoldingWithQuote[] = holdings.map((h) => {
-    const quote = quotes[h.ticker];
+    const yahooTicker = toYahooTicker(h.ticker, h.market || "US");
+    const quote = quotes[yahooTicker] || quotes[h.ticker];
     const currentPrice = quote?.price || h.avgCost;
     const marketValue = currentPrice * h.shares;
     const costBasis = h.avgCost * h.shares;

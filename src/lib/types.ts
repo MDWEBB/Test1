@@ -1,9 +1,12 @@
+export type Market = "US" | "ASX";
+
 export interface Holding {
   id: string;
   ticker: string;
   name: string;
   shares: number;
   avgCost: number;
+  market: Market;
   dateAdded: string;
   notes?: string;
 }

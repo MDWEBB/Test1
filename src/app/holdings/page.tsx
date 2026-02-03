@@ -47,11 +47,11 @@ export default function HoldingsPage() {
         )}
       </div>
 
-      {/* Quick Add Common ETFs */}
+      {/* Popular US Stocks & ETFs via Stake */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-        <h2 className="mb-3 font-semibold text-white">Popular ETFs for Monthly Investing</h2>
+        <h2 className="mb-3 font-semibold text-white">Popular US ETFs (via Stake)</h2>
         <p className="mb-3 text-sm text-zinc-400">
-          These are popular low-cost ETFs commonly used for regular monthly investment plans.
+          Popular US-listed ETFs available on Stake for monthly investing.
         </p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
           {[
@@ -61,14 +61,44 @@ export default function HoldingsPage() {
             { ticker: "SCHD", name: "Schwab US Dividend Equity" },
             { ticker: "VGT", name: "Vanguard Info Tech" },
             { ticker: "VYM", name: "Vanguard High Dividend" },
-            { ticker: "ARKK", name: "ARK Innovation" },
             { ticker: "SPY", name: "SPDR S&P 500" },
+            { ticker: "IVV", name: "iShares Core S&P 500" },
           ].map((etf) => (
             <div
               key={etf.ticker}
               className="rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2"
             >
               <span className="font-medium text-white">{etf.ticker}</span>
+              <span className="ml-1.5 rounded bg-blue-400/10 px-1 py-0.5 text-[10px] text-blue-400">US</span>
+              <p className="text-xs text-zinc-400">{etf.name}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Popular ASX ETFs */}
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+        <h2 className="mb-3 font-semibold text-white">Popular ASX ETFs</h2>
+        <p className="mb-3 text-sm text-zinc-400">
+          Australian-listed ETFs for local market exposure and diversification.
+        </p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          {[
+            { ticker: "VAS", name: "Vanguard Australian Shares" },
+            { ticker: "A200", name: "BetaShares ASX 200" },
+            { ticker: "VGS", name: "Vanguard Intl Shares" },
+            { ticker: "NDQ", name: "BetaShares NASDAQ 100" },
+            { ticker: "IVV", name: "iShares S&P 500 (ASX)" },
+            { ticker: "VDHG", name: "Vanguard Diversified High Growth" },
+            { ticker: "IOZ", name: "iShares Core ASX 200" },
+            { ticker: "DHHF", name: "BetaShares Diversified All Growth" },
+          ].map((etf) => (
+            <div
+              key={`asx-${etf.ticker}`}
+              className="rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2"
+            >
+              <span className="font-medium text-white">{etf.ticker}</span>
+              <span className="ml-1.5 rounded bg-yellow-400/10 px-1 py-0.5 text-[10px] text-yellow-400">ASX</span>
               <p className="text-xs text-zinc-400">{etf.name}</p>
             </div>
           ))}

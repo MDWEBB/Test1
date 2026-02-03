@@ -7,6 +7,7 @@ import { NewsCard } from "@/components/news-card";
 
 const CATEGORIES = [
   { id: "all", label: "All News" },
+  { id: "australia", label: "Australia" },
   { id: "tariffs", label: "Tariffs & Trade" },
   { id: "earnings", label: "Earnings" },
 ];

@@ -25,7 +25,9 @@ export async function GET(request: NextRequest) {
   const symbols = tickers.split(",").map((t) => t.trim().toUpperCase());
 
   try {
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(",")}`;
+    // Yahoo Finance uses .AX suffix for ASX-listed stocks
+    const yahooSymbols = symbols.map((s) => s);
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yahooSymbols.join(",")}`;
     const res = await fetch(url, {
       headers: {
         "User-Agent": "Mozilla/5.0",

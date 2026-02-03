@@ -31,7 +31,9 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
-        setHoldings(JSON.parse(saved));
+        // Ensure backwards compatibility: add default market for old holdings
+        const parsed = JSON.parse(saved);
+        setHoldings(parsed.map((h: Holding) => ({ ...h, market: h.market || "US" })));
       } catch {}
     }
     const savedWatchlist = localStorage.getItem(WATCHLIST_KEY);

@@ -1,7 +1,7 @@
-export function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
+export function formatCurrency(value: number, currency: "AUD" | "USD" = "USD"): string {
+  return new Intl.NumberFormat("en-AU", {
     style: "currency",
-    currency: "USD",
+    currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
@@ -28,7 +28,7 @@ export function formatDate(dateStr: string): string {
   if (diffHours < 1) return `${Math.floor(diffMs / (1000 * 60))}m ago`;
   if (diffHours < 24) return `${Math.floor(diffHours)}h ago`;
   if (diffHours < 48) return "Yesterday";
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return date.toLocaleDateString("en-AU", { month: "short", day: "numeric" });
 }
 
 export function gainColor(value: number): string {

@@ -34,10 +34,15 @@ function parseRSSItems(xml: string, sourceName: string): RSSItem[] {
 }
 
 const RSS_FEEDS = [
+  // Global & US markets
   { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US", name: "Yahoo Finance" },
   { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?region=US&lang=en-US", name: "Yahoo Finance Market" },
   { url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", name: "CNBC Markets" },
   { url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001147", name: "CNBC Economy" },
+  // Australian market
+  { url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^AXJO&region=AU&lang=en-AU", name: "Yahoo Finance ASX" },
+  { url: "https://www.afr.com/rss/markets", name: "AFR Markets" },
+  { url: "https://www.afr.com/rss/wealth", name: "AFR Wealth" },
 ];
 
 export async function GET(request: NextRequest) {
@@ -81,6 +86,11 @@ export async function GET(request: NextRequest) {
       articles = articles.filter((a) => {
         const text = `${a.title} ${a.description}`.toLowerCase();
         return /earnings|revenue|profit|quarterly|q[1-4]|guidance|beat|miss/i.test(text);
+      });
+    } else if (category === "australia") {
+      articles = articles.filter((a) => {
+        const text = `${a.title} ${a.description} ${a.source}`.toLowerCase();
+        return /australia|asx|aussie|rba|afr|commonwealth|bhp|csl|nab|westpac|anz|telstra|woolworths|coles/i.test(text);
       });
     }
 

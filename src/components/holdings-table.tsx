@@ -45,6 +45,13 @@ export function HoldingsTable({ holdings, compact, onRemove }: HoldingsTableProp
                 <td className="px-3 py-3">
                   <div>
                     <span className="font-medium text-white">{h.ticker}</span>
+                    <span className={`ml-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${
+                      h.market === "ASX"
+                        ? "bg-yellow-400/10 text-yellow-400"
+                        : "bg-blue-400/10 text-blue-400"
+                    }`}>
+                      {h.market || "US"}
+                    </span>
                     {!compact && (
                       <p className="text-xs text-zinc-500">{h.name}</p>
                     )}
@@ -52,18 +59,18 @@ export function HoldingsTable({ holdings, compact, onRemove }: HoldingsTableProp
                 </td>
                 <td className="px-3 py-3 text-zinc-300">{h.shares}</td>
                 <td className="px-3 py-3 text-right text-zinc-300">
-                  {formatCurrency(h.currentPrice)}
+                  {formatCurrency(h.currentPrice, h.market === "ASX" ? "AUD" : "USD")}
                 </td>
                 <td className="px-3 py-3 text-right font-medium text-white">
-                  {formatCurrency(h.marketValue)}
+                  {formatCurrency(h.marketValue, h.market === "ASX" ? "AUD" : "USD")}
                 </td>
                 {!compact && (
                   <td className="px-3 py-3 text-right text-zinc-400">
-                    {formatCurrency(h.avgCost)}
+                    {formatCurrency(h.avgCost, h.market === "ASX" ? "AUD" : "USD")}
                   </td>
                 )}
                 <td className={`px-3 py-3 text-right font-medium ${gainColor(h.gain)}`}>
-                  {formatCurrency(h.gain)}
+                  {formatCurrency(h.gain, h.market === "ASX" ? "AUD" : "USD")}
                   <span className="ml-1 text-xs">({formatPercent(h.gainPercent)})</span>
                 </td>
                 <td className={`px-3 py-3 text-right ${gainColor(h.dayChangePercent)}`}>

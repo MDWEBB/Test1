@@ -6,9 +6,13 @@ import { usePortfolio } from "@/lib/portfolio-context";
 import { formatCurrency, formatPercent, formatNumber, gainColor, gainBg } from "@/lib/format";
 
 const POPULAR_TICKERS = [
-  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B",
-  "JPM", "V", "JNJ", "WMT", "PG", "MA", "HD",
-  "VOO", "VTI", "QQQ", "SCHD", "VGT", "VYM", "ARKK", "SPY",
+  // US stocks (available on Stake)
+  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+  "JPM", "V", "JNJ", "WMT",
+  "VOO", "VTI", "QQQ", "SCHD", "SPY",
+  // ASX stocks & ETFs (Yahoo Finance uses .AX suffix)
+  "CBA.AX", "BHP.AX", "CSL.AX", "NAB.AX", "WBC.AX",
+  "VAS.AX", "A200.AX", "VGS.AX", "NDQ.AX", "VDHG.AX",
 ];
 
 export default function OpportunitiesPage() {
@@ -66,7 +70,7 @@ export default function OpportunitiesPage() {
             value={customTicker}
             onChange={(e) => setCustomTicker(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleAddWatchlist()}
-            placeholder="Add ticker (e.g. AAPL)"
+            placeholder="e.g. AAPL or CBA.AX"
             className="w-48 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-emerald-500 focus:outline-none"
           />
           <button
