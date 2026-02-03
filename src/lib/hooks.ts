@@ -4,82 +4,117 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { StockQuote, NewsArticle, HoldingWithQuote, PortfolioSummary } from "./types";
 import { usePortfolio } from "./portfolio-context";
 
-// Refresh every 5 minutes (300s) to be gentle on slow machines
-const DEFAULT_REFRESH_INTERVAL = 300000;
+// ─── Module-level stock cache (lives OUTSIDE React) ────────────────
+// This cache is immune to React re-renders, strict mode double-mounts,
+// and any other React lifecycle quirks. Network requests only happen
+// when the cache is stale (>30 seconds old).
 
-export function useStockQuotes(tickers: string[], refreshInterval = DEFAULT_REFRESH_INTERVAL) {
-  const [quotes, setQuotes] = useState<Record<string, StockQuote>>({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isMock, setIsMock] = useState(false);
+interface CacheEntry {
+  quotes: Record<string, StockQuote>;
+  isMock: boolean;
+  timestamp: number;
+}
 
-  // All mutable tracking lives in refs to avoid triggering re-renders
-  const failCount = useRef(0);
-  const isFetching = useRef(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const tickersRef = useRef(tickers.join(","));
+const CACHE_TTL = 30_000; // 30 seconds
+const POLL_INTERVAL = 300_000; // 5 minutes
+const MAX_FAILURES = 3;
 
-  // Derive a stable key; only update the ref when it actually changes
-  const tickersKey = tickers.join(",");
-  if (tickersKey !== tickersRef.current) {
-    tickersRef.current = tickersKey;
-    failCount.current = 0; // reset failures when tickers change
+const cache: Record<string, CacheEntry> = {};
+let globalFailCount = 0;
+let activeFetch: Promise<CacheEntry | null> | null = null;
+
+async function fetchStockData(tickersKey: string): Promise<CacheEntry | null> {
+  // Return cached data if fresh
+  const cached = cache[tickersKey];
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached;
   }
 
-  useEffect(() => {
-    // The actual fetch function — reads everything from refs, no closure deps
-    async function doFetch() {
-      const key = tickersRef.current;
-      if (!key) return;
-      if (failCount.current >= 3) return;
-      if (isFetching.current) return; // prevent overlapping fetches
+  // Too many failures — stop trying
+  if (globalFailCount >= MAX_FAILURES) {
+    return cached || null;
+  }
 
-      isFetching.current = true;
-      setLoading(true);
-      setError(null);
+  // If a fetch is already in flight, wait for it instead of starting another
+  if (activeFetch) {
+    return activeFetch;
+  }
 
-      try {
-        const res = await fetch(`/api/stocks?tickers=${key}`);
-        const data = await res.json();
-        if (data.isMock) {
-          setIsMock(true);
-          failCount.current += 1;
-        } else {
-          failCount.current = 0;
-        }
-        const map: Record<string, StockQuote> = {};
-        for (const q of data.quotes || []) {
-          map[q.ticker] = q;
-        }
-        setQuotes(map);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to fetch quotes");
-        failCount.current += 1;
-      } finally {
-        setLoading(false);
-        isFetching.current = false;
+  activeFetch = (async () => {
+    try {
+      const res = await fetch(`/api/stocks?tickers=${tickersKey}`);
+      const data = await res.json();
+      const map: Record<string, StockQuote> = {};
+      for (const q of data.quotes || []) {
+        map[q.ticker] = q;
       }
+      const entry: CacheEntry = {
+        quotes: map,
+        isMock: !!data.isMock,
+        timestamp: Date.now(),
+      };
+      cache[tickersKey] = entry;
+      if (data.isMock) {
+        globalFailCount++;
+      } else {
+        globalFailCount = 0;
+      }
+      return entry;
+    } catch {
+      globalFailCount++;
+      return cache[tickersKey] || null;
+    } finally {
+      activeFetch = null;
+    }
+  })();
+
+  return activeFetch;
+}
+
+// ─── React hook (thin wrapper around the cache) ─────────────────────
+
+export function useStockQuotes(tickers: string[], refreshInterval = POLL_INTERVAL) {
+  const [quotes, setQuotes] = useState<Record<string, StockQuote>>({});
+  const [loading, setLoading] = useState(true);
+  const [isMock, setIsMock] = useState(false);
+
+  // Track last data snapshot to avoid unnecessary state updates / re-renders
+  const lastSnapshot = useRef("");
+  const tickersKey = tickers.join(",");
+
+  useEffect(() => {
+    if (!tickersKey) {
+      setLoading(false);
+      return;
     }
 
-    // Initial fetch
-    doFetch();
+    let cancelled = false;
 
-    // Set up polling interval
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(doFetch, refreshInterval);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+    async function load() {
+      const entry = await fetchStockData(tickersKey);
+      if (cancelled) return;
+      if (entry) {
+        // Only update state if the data actually changed — this breaks
+        // any render loop that feeds back through useEffect.
+        const snapshot = JSON.stringify(entry.quotes);
+        if (snapshot !== lastSnapshot.current) {
+          lastSnapshot.current = snapshot;
+          setQuotes(entry.quotes);
+          setIsMock(entry.isMock);
+        }
       }
+      setLoading(false);
+    }
+
+    load();
+    const interval = setInterval(load, refreshInterval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
     };
-    // tickersKey is the ONLY thing that should restart the effect.
-    // refreshInterval changes are rare (prop-level).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickersKey, refreshInterval]);
 
-  return { quotes, loading, error, isMock };
+  return { quotes, loading, isMock };
 }
 
 // Convert ticker to Yahoo Finance format (ASX stocks need .AX suffix)

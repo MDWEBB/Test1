@@ -14,6 +14,18 @@ interface YahooChartMeta {
   fiftyTwoWeekLow?: number;
 }
 
+// ─── Server-side in-memory cache ────────────────────────────────────
+// Even if the client sends hundreds of requests, we only hit Yahoo
+// Finance once per 60 seconds per ticker set.
+
+interface ServerCache {
+  body: string;
+  timestamp: number;
+}
+
+const responseCache: Record<string, ServerCache> = {};
+const SERVER_CACHE_TTL = 60_000; // 60 seconds
+
 // Simple hash to generate stable "random-looking" numbers from a string
 function stableHash(str: string): number {
   let hash = 0;
@@ -61,7 +73,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "tickers parameter required" }, { status: 400 });
   }
 
+  // Normalise the cache key
+  const cacheKey = tickers.toUpperCase().split(",").sort().join(",");
+
+  // Return cached response if fresh
+  const cached = responseCache[cacheKey];
+  if (cached && Date.now() - cached.timestamp < SERVER_CACHE_TTL) {
+    return new NextResponse(cached.body, {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   const symbols = tickers.split(",").map((t) => t.trim().toUpperCase());
+
+  let responseBody: string;
 
   try {
     // Fetch each symbol via the v8 chart endpoint
@@ -94,12 +120,11 @@ export async function GET(request: NextRequest) {
     const validQuotes = quotes.filter(Boolean);
 
     if (validQuotes.length > 0) {
-      return NextResponse.json({ quotes: validQuotes });
+      responseBody = JSON.stringify({ quotes: validQuotes });
+    } else {
+      throw new Error("No valid quotes returned");
     }
-
-    throw new Error("No valid quotes returned");
-  } catch (error) {
-    console.error("Stock API error:", error);
+  } catch {
     // Return deterministic mock data so the UI doesn't flicker with random values
     const mockQuotes = symbols.map((s) => {
       const h = stableHash(s);
@@ -117,6 +142,14 @@ export async function GET(request: NextRequest) {
         marketCap: (h % 900 + 100) * 1e9,
       };
     });
-    return NextResponse.json({ quotes: mockQuotes, isMock: true });
+    responseBody = JSON.stringify({ quotes: mockQuotes, isMock: true });
   }
+
+  // Store in cache
+  responseCache[cacheKey] = { body: responseBody, timestamp: Date.now() };
+
+  return new NextResponse(responseBody, {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
