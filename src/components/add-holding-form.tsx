@@ -4,6 +4,12 @@ import { useState, FormEvent } from "react";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { Market, Holding } from "@/lib/types";
 
+// Stake minimum purchase requirements
+const STAKE_MINIMUMS = {
+  US: { minimum: 500, brokerage: 3, currency: "USD" },  // $500 USD min + $3 brokerage
+  ASX: { minimum: 500, brokerage: 3, currency: "AUD" }, // $500 AUD min + $3 brokerage
+};
+
 interface AddHoldingFormProps {
   onDone?: () => void;
   existingHoldings?: Holding[];
@@ -24,6 +30,7 @@ export function AddHoldingForm({ onDone, existingHoldings = [] }: AddHoldingForm
   const [transactionDate, setTransactionDate] = useState(
     new Date().toISOString().split("T")[0]
   );
+  const [includeBrokerage, setIncludeBrokerage] = useState(true);
 
   const parsedShares = parseFloat(shares) || 0;
   const parsedCost = parseFloat(avgCost) || 0;
@@ -38,6 +45,16 @@ export function AddHoldingForm({ onDone, existingHoldings = [] }: AddHoldingForm
     costMode === "perShare" ? parsedCost * parsedShares : parsedCost;
 
   const selectedHolding = allHoldings.find((h) => h.id === selectedHoldingId);
+
+  // Get current market for minimum calculations
+  const currentMarket = (mode === "buy" || mode === "sell") && selectedHolding
+    ? selectedHolding.market
+    : market;
+  const stakeMin = STAKE_MINIMUMS[currentMarket];
+
+  // Check if below minimum for new holdings
+  const isBelowMinimum = mode === "new" && totalCost > 0 && totalCost < stakeMin.minimum;
+  const totalWithBrokerage = totalCost + (includeBrokerage ? stakeMin.brokerage : 0);
 
   // Calculate estimated CGT for sells
   const estimatedCGT = selectedHolding && mode === "sell" && parsedShares > 0 && parsedCost > 0
@@ -91,6 +108,16 @@ export function AddHoldingForm({ onDone, existingHoldings = [] }: AddHoldingForm
     } else {
       // Add new holding
       if (!ticker || !shares || !avgCost) return;
+
+      // Validate minimum purchase for new holdings
+      if (totalCost < stakeMin.minimum) {
+        const proceed = confirm(
+          `Stake requires a minimum of ${stakeMin.currency} $${stakeMin.minimum} for new holdings.\n\n` +
+          `Your purchase: ${stakeMin.currency} $${totalCost.toFixed(2)}\n\n` +
+          `Do you still want to record this transaction? (Maybe you used a different broker)`
+        );
+        if (!proceed) return;
+      }
 
       addHolding(
         {
@@ -329,6 +356,51 @@ export function AddHoldingForm({ onDone, existingHoldings = [] }: AddHoldingForm
           )}
         </div>
       </div>
+
+      {/* Stake minimum and brokerage info for buys */}
+      {!isSellMode && (
+        <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-zinc-400">Stake Brokerage (${stakeMin.brokerage} {stakeMin.currency})</span>
+            <button
+              type="button"
+              onClick={() => setIncludeBrokerage(!includeBrokerage)}
+              className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                includeBrokerage
+                  ? "bg-emerald-600 text-white"
+                  : "bg-zinc-700 text-zinc-400"
+              }`}
+            >
+              {includeBrokerage ? "Included" : "Not included"}
+            </button>
+          </div>
+          {totalCost > 0 && (
+            <div className="mt-2 flex items-center justify-between border-t border-zinc-700 pt-2">
+              <span className="text-sm text-zinc-400">Total outlay:</span>
+              <span className="font-medium text-white">
+                {currency} {totalWithBrokerage.toFixed(2)}
+              </span>
+            </div>
+          )}
+          {mode === "new" && (
+            <p className="mt-2 text-xs text-zinc-500">
+              Stake minimum: {stakeMin.currency} ${stakeMin.minimum} for new holdings
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Warning if below minimum */}
+      {isBelowMinimum && (
+        <div className="rounded-lg border border-orange-600/30 bg-orange-600/10 p-3">
+          <p className="text-sm text-orange-400">
+            Below Stake minimum of {stakeMin.currency} ${stakeMin.minimum} for new holdings.
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            You can still record this if purchased through a different broker.
+          </p>
+        </div>
+      )}
 
       {/* CGT Preview for sells */}
       {mode === "sell" && estimatedCGT && (
