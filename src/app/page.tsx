@@ -15,6 +15,37 @@ export default function Dashboard() {
   const tickerQuery = rawHoldings.map((h) => h.ticker.toLowerCase()).join(",");
   const { articles, loading: newsLoading } = useNews(tickerQuery || undefined);
 
+  // Check if portfolio has mixed currencies
+  const hasUS = summary.holdings.some((h) => h.market !== "ASX");
+  const hasASX = summary.holdings.some((h) => h.market === "ASX");
+  const isMixed = hasUS && hasASX;
+
+  // Split totals by currency for mixed portfolios
+  const usTotals = summary.holdings
+    .filter((h) => h.market !== "ASX")
+    .reduce(
+      (acc, h) => ({
+        value: acc.value + h.marketValue,
+        cost: acc.cost + h.avgCost * h.shares,
+      }),
+      { value: 0, cost: 0 }
+    );
+  const asxTotals = summary.holdings
+    .filter((h) => h.market === "ASX")
+    .reduce(
+      (acc, h) => ({
+        value: acc.value + h.marketValue,
+        cost: acc.cost + h.avgCost * h.shares,
+      }),
+      { value: 0, cost: 0 }
+    );
+
+  // Determine the primary currency for single-currency portfolios
+  const primaryCurrency: "AUD" | "USD" = !hasUS ? "AUD" : "USD";
+
+  const totalGain =
+    usTotals.value - usTotals.cost + (asxTotals.value - asxTotals.cost);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -30,17 +61,35 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
           label="Total Value"
-          value={formatCurrency(summary.totalValue)}
+          value={
+            isMixed
+              ? `${formatCurrency(usTotals.value, "USD")}`
+              : formatCurrency(summary.totalValue, primaryCurrency)
+          }
+          subValue={isMixed ? formatCurrency(asxTotals.value, "AUD") : undefined}
         />
         <StatCard
           label="Total Cost"
-          value={formatCurrency(summary.totalCost)}
+          value={
+            isMixed
+              ? `${formatCurrency(usTotals.cost, "USD")}`
+              : formatCurrency(summary.totalCost, primaryCurrency)
+          }
+          subValue={isMixed ? formatCurrency(asxTotals.cost, "AUD") : undefined}
         />
         <StatCard
           label="Total Gain/Loss"
-          value={formatCurrency(summary.totalGain)}
-          subValue={formatPercent(summary.totalGainPercent)}
-          subColor={gainColor(summary.totalGain)}
+          value={
+            isMixed
+              ? formatCurrency(usTotals.value - usTotals.cost, "USD")
+              : formatCurrency(summary.totalGain, primaryCurrency)
+          }
+          subValue={
+            isMixed
+              ? formatCurrency(asxTotals.value - asxTotals.cost, "AUD")
+              : formatPercent(summary.totalGainPercent)
+          }
+          subColor={gainColor(totalGain)}
         />
         <StatCard
           label="Holdings"
@@ -101,7 +150,7 @@ export default function Dashboard() {
                     <div>
                       <span className="font-medium text-white">{h.ticker}</span>
                       <span className="ml-2 text-sm text-zinc-400">
-                        {formatCurrency(h.currentPrice)}
+                        {formatCurrency(h.currentPrice, h.market === "ASX" ? "AUD" : "USD")}
                       </span>
                     </div>
                     <span
