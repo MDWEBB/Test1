@@ -4,12 +4,28 @@ import { useState } from "react";
 import { usePortfolioSummary, useNews, useStockHistory, toYahooTicker } from "@/lib/hooks";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { StatCard } from "@/components/stat-card";
-import { HoldingsTable } from "@/components/holdings-table";
 import { PortfolioChart } from "@/components/portfolio-chart";
 import { PriceChart } from "@/components/price-chart";
 import { NewsCard } from "@/components/news-card";
 import { formatCurrency, formatPercent, gainColor } from "@/lib/format";
+import { Transaction } from "@/lib/types";
 import Link from "next/link";
+
+function formatDate(isoString: string): string {
+  return new Date(isoString).toLocaleDateString("en-AU", {
+    day: "numeric",
+    month: "short",
+    year: "2-digit",
+  });
+}
+
+function getFirstPurchaseDate(transactions: Transaction[] | undefined): string | null {
+  if (!transactions || transactions.length === 0) return null;
+  const earliest = transactions.reduce((min, t) =>
+    new Date(t.date) < new Date(min.date) ? t : min
+  );
+  return earliest.date;
+}
 
 const RANGE_OPTIONS = [
   { label: "1M", value: "1mo" },
@@ -231,7 +247,7 @@ export default function Dashboard() {
                   <th className="px-3 py-2 font-medium text-right">Price</th>
                   <th className="px-3 py-2 font-medium text-right">Value</th>
                   <th className="px-3 py-2 font-medium text-right">Gain/Loss</th>
-                  <th className="px-3 py-2 font-medium text-right">Day</th>
+                  <th className="px-3 py-2 font-medium text-right">First Buy</th>
                 </tr>
               </thead>
               <tbody>
@@ -239,6 +255,9 @@ export default function Dashboard() {
                   .sort((a, b) => b.marketValue - a.marketValue)
                   .map((h) => {
                     const isSelected = selectedTickers.includes(h.ticker);
+                    const rawHolding = rawHoldings.find((rh) => rh.id === h.id);
+                    const firstBuyDate = getFirstPurchaseDate(rawHolding?.transactions);
+                    const txCount = rawHolding?.transactions?.length || 0;
                     return (
                       <tr
                         key={h.id}
@@ -281,8 +300,19 @@ export default function Dashboard() {
                           {formatCurrency(h.gain, h.market === "ASX" ? "AUD" : "USD")}
                           <span className="ml-1 text-xs">({formatPercent(h.gainPercent)})</span>
                         </td>
-                        <td className={`px-3 py-3 text-right ${gainColor(h.dayChangePercent)}`}>
-                          {formatPercent(h.dayChangePercent)}
+                        <td className="px-3 py-3 text-right text-zinc-400">
+                          {firstBuyDate ? (
+                            <div>
+                              <span className="text-zinc-300">{formatDate(firstBuyDate)}</span>
+                              {txCount > 1 && (
+                                <span className="ml-1 text-[10px] text-zinc-500">
+                                  ({txCount} buys)
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            "-"
+                          )}
                         </td>
                       </tr>
                     );

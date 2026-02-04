@@ -1,11 +1,12 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { Holding } from "./types";
+import { Holding, Transaction } from "./types";
 
 interface PortfolioContextType {
   holdings: Holding[];
-  addHolding: (holding: Omit<Holding, "id">) => void;
+  addHolding: (holding: Omit<Holding, "id" | "transactions">, purchaseDate?: string) => void;
+  addTransaction: (holdingId: string, transaction: Omit<Transaction, "id">) => void;
   updateHolding: (id: string, updates: Partial<Holding>) => void;
   removeHolding: (id: string) => void;
   watchlist: string[];
@@ -31,9 +32,24 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
-        // Ensure backwards compatibility: add default market for old holdings
+        // Ensure backwards compatibility: add default market and migrate to transactions
         const parsed = JSON.parse(saved);
-        setHoldings(parsed.map((h: Holding) => ({ ...h, market: h.market || "US" })));
+        setHoldings(parsed.map((h: Holding) => {
+          const holding = { ...h, market: h.market || "US" };
+          // Migrate old holdings without transactions to have an initial transaction
+          if (!holding.transactions || holding.transactions.length === 0) {
+            holding.transactions = [{
+              id: generateId(),
+              date: holding.dateAdded || new Date().toISOString(),
+              shares: holding.shares,
+              pricePerShare: holding.avgCost,
+              totalAmount: holding.shares * holding.avgCost,
+              type: "buy" as const,
+              notes: "Initial purchase (migrated)",
+            }];
+          }
+          return holding;
+        }));
       } catch {}
     }
     const savedWatchlist = localStorage.getItem(WATCHLIST_KEY);
@@ -57,8 +73,57 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
     }
   }, [watchlist, loaded]);
 
-  const addHolding = useCallback((holding: Omit<Holding, "id">) => {
-    setHoldings((prev) => [...prev, { ...holding, id: generateId() }]);
+  const addHolding = useCallback((holding: Omit<Holding, "id" | "transactions">, purchaseDate?: string) => {
+    const holdingId = generateId();
+    const transactionDate = purchaseDate || holding.dateAdded || new Date().toISOString();
+    const initialTransaction: Transaction = {
+      id: generateId(),
+      date: transactionDate,
+      shares: holding.shares,
+      pricePerShare: holding.avgCost,
+      totalAmount: holding.shares * holding.avgCost,
+      type: "buy",
+    };
+    setHoldings((prev) => [...prev, {
+      ...holding,
+      id: holdingId,
+      dateAdded: transactionDate,
+      transactions: [initialTransaction],
+    }]);
+  }, []);
+
+  const addTransaction = useCallback((holdingId: string, transaction: Omit<Transaction, "id">) => {
+    setHoldings((prev) =>
+      prev.map((h) => {
+        if (h.id !== holdingId) return h;
+
+        const newTransaction: Transaction = { ...transaction, id: generateId() };
+        const transactions = [...(h.transactions || []), newTransaction];
+
+        // Recalculate shares and avgCost from all transactions
+        let totalShares = 0;
+        let totalCost = 0;
+
+        for (const t of transactions) {
+          if (t.type === "buy") {
+            totalCost += t.shares * t.pricePerShare;
+            totalShares += t.shares;
+          } else {
+            // For sells, reduce shares but don't affect avgCost calculation
+            totalShares -= t.shares;
+          }
+        }
+
+        const avgCost = totalShares > 0 ? totalCost / totalShares : h.avgCost;
+
+        return {
+          ...h,
+          shares: totalShares,
+          avgCost,
+          transactions,
+        };
+      })
+    );
   }, []);
 
   const updateHolding = useCallback((id: string, updates: Partial<Holding>) => {
@@ -90,6 +155,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
       value={{
         holdings,
         addHolding,
+        addTransaction,
         updateHolding,
         removeHolding,
         watchlist,

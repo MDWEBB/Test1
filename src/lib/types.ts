@@ -1,5 +1,15 @@
 export type Market = "US" | "ASX";
 
+export interface Transaction {
+  id: string;
+  date: string;       // ISO date string
+  shares: number;     // Number of shares bought (positive) or sold (negative)
+  pricePerShare: number;
+  totalAmount: number; // shares * pricePerShare
+  type: "buy" | "sell";
+  notes?: string;
+}
+
 export interface Holding {
   id: string;
   ticker: string;
@@ -9,6 +19,7 @@ export interface Holding {
   market: Market;
   dateAdded: string;
   notes?: string;
+  transactions?: Transaction[]; // Transaction history for this holding
 }
 
 export interface StockQuote {
