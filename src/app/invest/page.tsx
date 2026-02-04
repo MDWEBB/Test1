@@ -140,29 +140,58 @@ export default function InvestPage() {
       }
     }
 
-    // Normalise weights for available categories
-    const availableCategories = Object.keys(categoryPicks);
-    const totalWeight = availableCategories.reduce((sum, cat) => sum + (weights[cat] || 0), 0);
-
-    for (const cat of availableCategories) {
-      if (remaining <= 0) break;
-      const etf = categoryPicks[cat];
+    // Build affordable picks with prices, sorted by weight priority
+    const affordablePicks: { etf: typeof SUGGESTED_ETFS[0]; q: StockQuote; weight: number }[] = [];
+    for (const [cat, etf] of Object.entries(categoryPicks)) {
       const q = quotes[etf.ticker] as StockQuote | undefined;
       if (!q || q.price <= 0) continue;
+      affordablePicks.push({ etf, q, weight: weights[cat] || 0 });
+    }
+    // Sort by weight descending so highest-priority categories get allocated first
+    affordablePicks.sort((a, b) => b.weight - a.weight);
 
-      const catBudget = totalWeight > 0 ? (remaining * (weights[cat] || 0)) / totalWeight : remaining / availableCategories.length;
-      const shares = Math.floor(catBudget / q.price);
-      if (shares < 1) continue;
+    // Multi-pass allocation: keep distributing remaining budget until nothing more fits
+    const allocated = new Map<string, { shares: number; cost: number }>();
+    let changed = true;
+    while (changed && remaining > 0) {
+      changed = false;
+      const totalWeight = affordablePicks.reduce((sum, p) => sum + p.weight, 0);
 
-      const cost = shares * q.price;
+      for (const { etf, q, weight } of affordablePicks) {
+        if (remaining < q.price) continue; // can't afford even 1 share
+        // Budget for this ETF: proportional share of remaining, but at least try 1 share
+        const proportional = totalWeight > 0 ? (remaining * weight) / totalWeight : remaining / affordablePicks.length;
+        const sharesToBuy = Math.max(1, Math.floor(proportional / q.price));
+        const cost = sharesToBuy * q.price;
+        if (cost > remaining) {
+          // Try just 1 share
+          if (q.price <= remaining) {
+            const prev = allocated.get(etf.ticker) || { shares: 0, cost: 0 };
+            allocated.set(etf.ticker, { shares: prev.shares + 1, cost: prev.cost + q.price });
+            remaining -= q.price;
+            changed = true;
+          }
+        } else {
+          const prev = allocated.get(etf.ticker) || { shares: 0, cost: 0 };
+          allocated.set(etf.ticker, { shares: prev.shares + sharesToBuy, cost: prev.cost + cost });
+          remaining -= cost;
+          changed = true;
+        }
+      }
+    }
+
+    // Convert allocations to results
+    for (const { etf, q } of affordablePicks) {
+      const alloc = allocated.get(etf.ticker);
+      if (!alloc || alloc.shares < 1) continue;
       results.push({
         ticker: etf.ticker,
         displayTicker: etf.ticker.replace(".AX", ""),
         name: etf.name,
         market: etf.market,
         price: q.price,
-        shares,
-        cost,
+        shares: alloc.shares,
+        cost: alloc.cost,
         reason: etf.description,
         isExisting: false,
         fee: etf.fee,
