@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { useStockQuotes } from "@/lib/hooks";
+import { useState, useMemo } from "react";
+import { useStockQuotes, useNews } from "@/lib/hooks";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { formatCurrency, formatPercent, formatNumber, gainColor, gainBg } from "@/lib/format";
+import { NewsArticle } from "@/lib/types";
 
 const POPULAR_TICKERS = [
   // US stocks (available on Stake)
@@ -113,6 +114,59 @@ export default function OpportunitiesPage() {
     .sort((a, b) => b.discount - a.discount)
     .slice(0, 10);
 
+  // Fetch news for the value-tab tickers so we can show context
+  const valueTickers = useMemo(() => {
+    const tickers = [
+      ...discountedFromPeak.map((q) => q.ticker),
+      ...nearLow.map((q) => q.ticker),
+    ];
+    // Build search query from ticker symbols and company names
+    const names = [...discountedFromPeak, ...nearLow].map((q) =>
+      q.name.split(" ")[0].toLowerCase()
+    );
+    return [...new Set([...tickers.map((t) => t.replace(".AX", "").toLowerCase()), ...names])].join(",");
+  }, [discountedFromPeak, nearLow]);
+
+  const { articles: valueNews } = useNews(valueTickers || undefined);
+
+  // Match news articles to a specific ticker
+  function getNewsForTicker(ticker: string, name: string): NewsArticle[] {
+    const cleanTicker = ticker.replace(".AX", "").toLowerCase();
+    const firstName = name.split(" ")[0].toLowerCase();
+    return valueNews.filter((a) => {
+      const text = `${a.title} ${a.description}`.toLowerCase();
+      return text.includes(cleanTicker) || (firstName.length > 3 && text.includes(firstName));
+    }).slice(0, 2);
+  }
+
+  // Generate a simple outlook based on position in 52-week range
+  function getOutlook(price: number, low: number | undefined, high: number | undefined): { label: string; color: string; detail: string } {
+    if (!low || !high || high <= low) return { label: "N/A", color: "text-zinc-500", detail: "" };
+    const range = high - low;
+    const position = (price - low) / range; // 0 = at low, 1 = at high
+
+    if (position < 0.15) return {
+      label: "Deep Value",
+      color: "text-red-400",
+      detail: "Trading in the bottom 15% of its 52-week range. High risk, potentially high reward if fundamentals are solid.",
+    };
+    if (position < 0.35) return {
+      label: "Potential Value",
+      color: "text-amber-400",
+      detail: "Trading in the lower third of its range. May be oversold — check recent earnings and news for why.",
+    };
+    if (position < 0.55) return {
+      label: "Mid-Range",
+      color: "text-zinc-400",
+      detail: "Trading near the middle of its 52-week range. Fair pricing unless a catalyst changes the outlook.",
+    };
+    return {
+      label: "Near Highs",
+      color: "text-emerald-400",
+      detail: "Trading near the upper range. Momentum is positive but less room for upside.",
+    };
+  }
+
   function handleAddWatchlist() {
     if (customTicker.trim()) {
       addToWatchlist(customTicker.trim());
@@ -214,57 +268,98 @@ export default function OpportunitiesPage() {
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
             <h2 className="mb-1 font-semibold text-white">Discounted from Peak</h2>
             <p className="mb-3 text-xs text-zinc-400">
-              Stocks trading well below their 52-week high. These have fallen from their peaks and may be undervalued
-              — or may have further to fall. Do your own research before buying dips.
+              Stocks trading well below their 52-week high with news context and outlook.
+              Do your own research before buying dips.
             </p>
             {loading ? (
               <div className="flex h-32 items-center justify-center">
                 <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400" />
               </div>
             ) : discountedFromPeak.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-zinc-800 text-left text-zinc-500">
-                      <th className="px-3 py-2 font-medium">Ticker</th>
-                      <th className="px-3 py-2 font-medium text-right">Price</th>
-                      <th className="px-3 py-2 font-medium text-right">52W High</th>
-                      <th className="px-3 py-2 font-medium text-right">Discount</th>
-                      <th className="px-3 py-2 font-medium text-right">52W Low</th>
-                      <th className="px-3 py-2 font-medium text-right">Day</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {discountedFromPeak.map((q) => (
-                      <tr
-                        key={q.ticker}
-                        className="border-b border-zinc-800/50 hover:bg-zinc-800/30"
-                      >
-                        <td className="px-3 py-2 font-medium text-white">
-                          {q.ticker}
-                          <p className="text-xs font-normal text-zinc-500">{q.name}</p>
-                        </td>
-                        <td className="px-3 py-2 text-right text-zinc-300">
-                          {formatCurrency(q.price, tickerCurrency(q.ticker))}
-                        </td>
-                        <td className="px-3 py-2 text-right text-emerald-400">
-                          {formatCurrency(q.high, tickerCurrency(q.ticker))}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <span className="rounded-full bg-red-400/10 px-2 py-0.5 text-xs font-medium text-red-400">
-                            -{q.discount.toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right text-zinc-500">
-                          {formatCurrency(q.fiftyTwoWeekLow || 0, tickerCurrency(q.ticker))}
-                        </td>
-                        <td className={`px-3 py-2 text-right ${gainColor(q.changePercent)}`}>
-                          {formatPercent(q.changePercent)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-3">
+                {discountedFromPeak.map((q) => {
+                  const news = getNewsForTicker(q.ticker, q.name);
+                  const outlook = getOutlook(q.price, q.fiftyTwoWeekLow, q.fiftyTwoWeekHigh);
+
+                  return (
+                    <div
+                      key={q.ticker}
+                      className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4"
+                    >
+                      {/* Header row */}
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-white">{q.ticker}</span>
+                            <span className="rounded-full bg-red-400/10 px-2 py-0.5 text-xs font-medium text-red-400">
+                              -{q.discount.toFixed(1)}% from peak
+                            </span>
+                            <span className={`text-xs font-medium ${outlook.color}`}>
+                              {outlook.label}
+                            </span>
+                          </div>
+                          <p className="text-xs text-zinc-500">{q.name}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-medium text-zinc-200">
+                            {formatCurrency(q.price, tickerCurrency(q.ticker))}
+                          </p>
+                          <p className={`text-xs ${gainColor(q.changePercent)}`}>
+                            {formatPercent(q.changePercent)} today
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Price range bar */}
+                      <div className="mt-3">
+                        <div className="flex justify-between text-[10px] text-zinc-500">
+                          <span>52W Low: {formatCurrency(q.fiftyTwoWeekLow || 0, tickerCurrency(q.ticker))}</span>
+                          <span>52W High: {formatCurrency(q.high, tickerCurrency(q.ticker))}</span>
+                        </div>
+                        <div className="relative mt-1 h-2 rounded-full bg-zinc-700">
+                          {q.fiftyTwoWeekLow && q.fiftyTwoWeekHigh && q.fiftyTwoWeekHigh > q.fiftyTwoWeekLow && (
+                            <div
+                              className="absolute top-0 h-2 w-2 rounded-full bg-amber-400"
+                              style={{
+                                left: `${Math.min(100, Math.max(0, ((q.price - q.fiftyTwoWeekLow) / (q.fiftyTwoWeekHigh - q.fiftyTwoWeekLow)) * 100))}%`,
+                                transform: "translateX(-50%)",
+                              }}
+                            />
+                          )}
+                        </div>
+                        <p className="mt-1 text-[10px] text-zinc-600">{outlook.detail}</p>
+                      </div>
+
+                      {/* Related news */}
+                      {news.length > 0 && (
+                        <div className="mt-3 border-t border-zinc-700/50 pt-2">
+                          <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+                            Recent News
+                          </p>
+                          {news.map((article, i) => (
+                            <a
+                              key={i}
+                              href={article.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-1 block text-xs text-zinc-400 hover:text-emerald-400"
+                            >
+                              {article.title}
+                              <span className="ml-1 text-zinc-600">— {article.source}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      {news.length === 0 && (
+                        <div className="mt-3 border-t border-zinc-700/50 pt-2">
+                          <p className="text-[10px] text-zinc-600">
+                            No specific news found. Check broader market conditions — drops may be driven by sector rotation, interest rates, or macroeconomic trends.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <p className="text-sm text-zinc-500">No significantly discounted stocks found.</p>
@@ -275,55 +370,81 @@ export default function OpportunitiesPage() {
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
             <h2 className="mb-1 font-semibold text-white">Near 52-Week Lows</h2>
             <p className="mb-3 text-xs text-zinc-400">
-              Stocks trading closest to their 52-week low. Can signal deep value if fundamentals are intact,
-              or a warning sign if the business is deteriorating.
+              Stocks trading closest to their 52-week low with context on why they&apos;re down.
             </p>
             {loading ? (
               <div className="flex h-32 items-center justify-center">
                 <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400" />
               </div>
             ) : nearLow.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-zinc-800 text-left text-zinc-500">
-                      <th className="px-3 py-2 font-medium">Ticker</th>
-                      <th className="px-3 py-2 font-medium text-right">Price</th>
-                      <th className="px-3 py-2 font-medium text-right">52W Low</th>
-                      <th className="px-3 py-2 font-medium text-right">52W High</th>
-                      <th className="px-3 py-2 font-medium text-right">% From Low</th>
-                      <th className="px-3 py-2 font-medium text-right">Day</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {nearLow.map((q) => (
-                      <tr
-                        key={q.ticker}
-                        className="border-b border-zinc-800/50 hover:bg-zinc-800/30"
-                      >
-                        <td className="px-3 py-2 font-medium text-white">
-                          {q.ticker}
-                          <p className="text-xs font-normal text-zinc-500">{q.name}</p>
-                        </td>
-                        <td className="px-3 py-2 text-right text-zinc-300">
-                          {formatCurrency(q.price, tickerCurrency(q.ticker))}
-                        </td>
-                        <td className="px-3 py-2 text-right text-red-400">
-                          {formatCurrency(q.fiftyTwoWeekLow || 0, tickerCurrency(q.ticker))}
-                        </td>
-                        <td className="px-3 py-2 text-right text-emerald-400">
-                          {formatCurrency(q.fiftyTwoWeekHigh || 0, tickerCurrency(q.ticker))}
-                        </td>
-                        <td className="px-3 py-2 text-right text-zinc-300">
-                          +{q.distFromLow.toFixed(1)}%
-                        </td>
-                        <td className={`px-3 py-2 text-right ${gainColor(q.changePercent)}`}>
-                          {formatPercent(q.changePercent)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-3">
+                {nearLow.map((q) => {
+                  const news = getNewsForTicker(q.ticker, q.name);
+                  const outlook = getOutlook(q.price, q.fiftyTwoWeekLow, q.fiftyTwoWeekHigh);
+
+                  return (
+                    <div
+                      key={q.ticker}
+                      className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-white">{q.ticker}</span>
+                            <span className="rounded-full bg-amber-400/10 px-2 py-0.5 text-xs font-medium text-amber-400">
+                              +{q.distFromLow.toFixed(1)}% from low
+                            </span>
+                            <span className={`text-xs font-medium ${outlook.color}`}>
+                              {outlook.label}
+                            </span>
+                          </div>
+                          <p className="text-xs text-zinc-500">{q.name}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-medium text-zinc-200">
+                            {formatCurrency(q.price, tickerCurrency(q.ticker))}
+                          </p>
+                          <p className={`text-xs ${gainColor(q.changePercent)}`}>
+                            {formatPercent(q.changePercent)} today
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Price context */}
+                      <div className="mt-2 flex gap-4 text-xs text-zinc-500">
+                        <span>Low: <span className="text-red-400">{formatCurrency(q.fiftyTwoWeekLow || 0, tickerCurrency(q.ticker))}</span></span>
+                        <span>High: <span className="text-emerald-400">{formatCurrency(q.fiftyTwoWeekHigh || 0, tickerCurrency(q.ticker))}</span></span>
+                      </div>
+                      <p className="mt-1 text-[10px] text-zinc-600">{outlook.detail}</p>
+
+                      {/* Related news */}
+                      {news.length > 0 && (
+                        <div className="mt-2 border-t border-zinc-700/50 pt-2">
+                          <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+                            Why it&apos;s down
+                          </p>
+                          {news.map((article, i) => (
+                            <a
+                              key={i}
+                              href={article.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-1 block text-xs text-zinc-400 hover:text-emerald-400"
+                            >
+                              {article.title}
+                              <span className="ml-1 text-zinc-600">— {article.source}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      {news.length === 0 && (
+                        <p className="mt-2 text-[10px] text-zinc-600">
+                          No specific news found. The drop may be sector-wide or driven by broader economic factors.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <p className="text-sm text-zinc-500">No data available.</p>
