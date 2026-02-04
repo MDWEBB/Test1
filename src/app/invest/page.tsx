@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { usePortfolioSummary, useStockQuotes } from "@/lib/hooks";
+import { usePortfolioSummary, useStockQuotes, useFundamentals } from "@/lib/hooks";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { formatCurrency, formatPercent, gainColor } from "@/lib/format";
 import { StockQuote } from "@/lib/types";
@@ -65,6 +65,7 @@ export default function InvestPage() {
     [holdingYahooTickers.join(",")]
   );
   const { quotes, loading } = useStockQuotes(allTickers, 300000);
+  const { fundamentals } = useFundamentals(allTickers);
 
   const budget = parseFloat(amount) || 0;
 
@@ -356,6 +357,20 @@ export default function InvestPage() {
                       </div>
                       <p className="text-xs text-zinc-500">{s.name}</p>
                       <p className="mt-1 text-xs text-zinc-400">{s.reason}</p>
+                      {(() => {
+                        const f = fundamentals[s.ticker];
+                        if (!f) return null;
+                        return (
+                          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-zinc-500">
+                            {f.dividendYield != null && f.dividendYield > 0 && <span>Yield: <span className="text-zinc-300">{(f.dividendYield * 100).toFixed(1)}%</span></span>}
+                            {f.trailingPE != null && <span>P/E: <span className="text-zinc-300">{f.trailingPE.toFixed(1)}</span></span>}
+                            {f.fiftyDayAverage != null && <span>50MA: <span className="text-zinc-300">{formatCurrency(f.fiftyDayAverage, currency(s.market))}</span></span>}
+                            {f.twoHundredDayAverage != null && <span>200MA: <span className="text-zinc-300">{formatCurrency(f.twoHundredDayAverage, currency(s.market))}</span></span>}
+                            {f.beta != null && <span>Beta: <span className="text-zinc-300">{f.beta.toFixed(2)}</span></span>}
+                            {f.recommendationKey && <span>Analyst: <span className="text-zinc-300">{f.recommendationKey}</span></span>}
+                          </div>
+                        );
+                      })()}
                     </div>
                     <div className="ml-4 text-right shrink-0">
                       <p className="text-lg font-semibold text-white">

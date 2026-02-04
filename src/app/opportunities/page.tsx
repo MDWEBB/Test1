@@ -1,10 +1,19 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useStockQuotes, useNews } from "@/lib/hooks";
+import {
+  useStockQuotes,
+  useNews,
+  useFundamentals,
+  useStockHistory,
+  calculateRSI,
+  computeCompositeScore,
+  type CompositeScore,
+  type FundamentalData,
+} from "@/lib/hooks";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { formatCurrency, formatPercent, formatNumber, gainColor, gainBg } from "@/lib/format";
-import { NewsArticle } from "@/lib/types";
+import { NewsArticle, StockQuote } from "@/lib/types";
 
 const POPULAR_TICKERS = [
   // US stocks (available on Stake)
@@ -72,6 +81,15 @@ function tickerCurrency(ticker: string): "AUD" | "USD" {
   return ticker.endsWith(".AX") ? "AUD" : "USD";
 }
 
+// Score label based on composite score
+function scoreLabel(score: number): { label: string; color: string; bg: string } {
+  if (score >= 70) return { label: "Strong", color: "text-emerald-400", bg: "bg-emerald-400" };
+  if (score >= 55) return { label: "Good", color: "text-blue-400", bg: "bg-blue-400" };
+  if (score >= 40) return { label: "Neutral", color: "text-zinc-400", bg: "bg-zinc-400" };
+  if (score >= 25) return { label: "Weak", color: "text-amber-400", bg: "bg-amber-400" };
+  return { label: "Poor", color: "text-red-400", bg: "bg-red-400" };
+}
+
 export default function OpportunitiesPage() {
   const { holdings, watchlist, addToWatchlist, removeFromWatchlist } = usePortfolio();
   const [customTicker, setCustomTicker] = useState("");
@@ -80,8 +98,38 @@ export default function OpportunitiesPage() {
   const holdingTickers = holdings.map((h) =>
     h.market === "ASX" ? `${h.ticker}.AX` : h.ticker
   );
-  const allTickers = [...new Set([...POPULAR_TICKERS, ...watchlist, ...holdingTickers])];
+  const allTickers = useMemo(
+    () => [...new Set([...POPULAR_TICKERS, ...watchlist, ...holdingTickers])],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [watchlist.join(","), holdingTickers.join(",")]
+  );
   const { quotes, loading, isMock } = useStockQuotes(allTickers, 300000);
+
+  // Fetch fundamentals for all tracked tickers
+  const { fundamentals, loading: fundLoading } = useFundamentals(allTickers);
+
+  // Fetch 3-month history for RSI calculations
+  const { data: historyData } = useStockHistory(allTickers, "3mo");
+
+  // Compute RSI for each ticker from history
+  const rsiMap = useMemo(() => {
+    const map: Record<string, number | null> = {};
+    for (const h of historyData) {
+      const prices = h.history.map((p) => p.close);
+      map[h.ticker] = calculateRSI(prices);
+    }
+    return map;
+  }, [historyData]);
+
+  // Build scored quotes: combine price data + fundamentals + technicals
+  const scoredQuotes = useMemo(() => {
+    return Object.values(quotes).map((q) => {
+      const fund = fundamentals[q.ticker];
+      const rsi = rsiMap[q.ticker] ?? null;
+      const score = computeCompositeScore(q, fund, rsi);
+      return { quote: q, fund, rsi, score };
+    });
+  }, [quotes, fundamentals, rsiMap]);
 
   const watchlistQuotes = watchlist
     .map((t) => quotes[t])
@@ -92,40 +140,38 @@ export default function OpportunitiesPage() {
     .sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent))
     .slice(0, 10);
 
-  // Stocks near 52-week low — potential deep value
-  const nearLow = Object.values(quotes)
-    .filter((q) => q.fiftyTwoWeekLow && q.price > 0)
-    .map((q) => ({
-      ...q,
-      distFromLow: ((q.price - (q.fiftyTwoWeekLow || q.price)) / (q.fiftyTwoWeekLow || q.price)) * 100,
-    }))
-    .sort((a, b) => a.distFromLow - b.distFromLow)
-    .slice(0, 8);
+  // Top scored stocks — highest composite score
+  const topScored = useMemo(
+    () => [...scoredQuotes]
+      .filter((s) => s.quote.price > 0 && s.score.total > 0)
+      .sort((a, b) => b.score.total - a.score.total)
+      .slice(0, 12),
+    [scoredQuotes]
+  );
 
-  // Stocks discounted from 52-week high — beaten down from peak
-  const discountedFromPeak = Object.values(quotes)
-    .filter((q) => q.fiftyTwoWeekHigh && q.price > 0)
-    .map((q) => {
-      const high = q.fiftyTwoWeekHigh || q.price;
-      const discount = ((high - q.price) / high) * 100;
-      return { ...q, discount, high };
-    })
-    .filter((q) => q.discount >= 5) // at least 5% below peak
-    .sort((a, b) => b.discount - a.discount)
-    .slice(0, 10);
+  // Stocks discounted from 52-week high with scores
+  const discountedFromPeak = useMemo(
+    () => scoredQuotes
+      .filter((s) => s.quote.fiftyTwoWeekHigh && s.quote.price > 0)
+      .map((s) => {
+        const high = s.quote.fiftyTwoWeekHigh || s.quote.price;
+        const discount = ((high - s.quote.price) / high) * 100;
+        return { ...s, discount, high };
+      })
+      .filter((s) => s.discount >= 5)
+      .sort((a, b) => b.score.total - a.score.total) // sort by score, not just discount
+      .slice(0, 10),
+    [scoredQuotes]
+  );
 
   // Fetch news for the value-tab tickers so we can show context
   const valueTickers = useMemo(() => {
-    const tickers = [
-      ...discountedFromPeak.map((q) => q.ticker),
-      ...nearLow.map((q) => q.ticker),
-    ];
-    // Build search query from ticker symbols and company names
-    const names = [...discountedFromPeak, ...nearLow].map((q) =>
-      q.name.split(" ")[0].toLowerCase()
+    const tickers = discountedFromPeak.map((s) => s.quote.ticker);
+    const names = discountedFromPeak.map((s) =>
+      s.quote.name.split(" ")[0].toLowerCase()
     );
     return [...new Set([...tickers.map((t) => t.replace(".AX", "").toLowerCase()), ...names])].join(",");
-  }, [discountedFromPeak, nearLow]);
+  }, [discountedFromPeak]);
 
   const { articles: valueNews } = useNews(valueTickers || undefined);
 
@@ -137,34 +183,6 @@ export default function OpportunitiesPage() {
       const text = `${a.title} ${a.description}`.toLowerCase();
       return text.includes(cleanTicker) || (firstName.length > 3 && text.includes(firstName));
     }).slice(0, 2);
-  }
-
-  // Generate a simple outlook based on position in 52-week range
-  function getOutlook(price: number, low: number | undefined, high: number | undefined): { label: string; color: string; detail: string } {
-    if (!low || !high || high <= low) return { label: "N/A", color: "text-zinc-500", detail: "" };
-    const range = high - low;
-    const position = (price - low) / range; // 0 = at low, 1 = at high
-
-    if (position < 0.15) return {
-      label: "Deep Value",
-      color: "text-red-400",
-      detail: "Trading in the bottom 15% of its 52-week range. High risk, potentially high reward if fundamentals are solid.",
-    };
-    if (position < 0.35) return {
-      label: "Potential Value",
-      color: "text-amber-400",
-      detail: "Trading in the lower third of its range. May be oversold — check recent earnings and news for why.",
-    };
-    if (position < 0.55) return {
-      label: "Mid-Range",
-      color: "text-zinc-400",
-      detail: "Trading near the middle of its 52-week range. Fair pricing unless a catalyst changes the outlook.",
-    };
-    return {
-      label: "Near Highs",
-      color: "text-emerald-400",
-      detail: "Trading near the upper range. Momentum is positive but less room for upside.",
-    };
   }
 
   function handleAddWatchlist() {
@@ -264,39 +282,44 @@ export default function OpportunitiesPage() {
       {/* ── VALUE TAB ── */}
       {tab === "value" && (
         <>
-          {/* Discounted from Peak */}
+          {/* Top Scored — Composite ranking */}
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-            <h2 className="mb-1 font-semibold text-white">Discounted from Peak</h2>
+            <h2 className="mb-1 font-semibold text-white">Top Ranked Stocks</h2>
             <p className="mb-3 text-xs text-zinc-400">
-              Stocks trading well below their 52-week high with news context and outlook.
-              Do your own research before buying dips.
+              Ranked by composite score combining value metrics, momentum, earnings quality, and analyst consensus.
+              {fundLoading && " Loading fundamentals..."}
             </p>
             {loading ? (
               <div className="flex h-32 items-center justify-center">
                 <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400" />
               </div>
-            ) : discountedFromPeak.length > 0 ? (
+            ) : topScored.length > 0 ? (
               <div className="space-y-3">
-                {discountedFromPeak.map((q) => {
+                {topScored.map(({ quote: q, fund, rsi, score }) => {
+                  const sl = scoreLabel(score.total);
                   const news = getNewsForTicker(q.ticker, q.name);
-                  const outlook = getOutlook(q.price, q.fiftyTwoWeekLow, q.fiftyTwoWeekHigh);
 
                   return (
                     <div
                       key={q.ticker}
                       className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4"
                     >
-                      {/* Header row */}
+                      {/* Header */}
                       <div className="flex items-start justify-between">
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-white">{q.ticker}</span>
-                            <span className="rounded-full bg-red-400/10 px-2 py-0.5 text-xs font-medium text-red-400">
-                              -{q.discount.toFixed(1)}% from peak
+                            <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${sl.color} ${sl.bg}/10`}>
+                              {score.total.toFixed(0)} — {sl.label}
                             </span>
-                            <span className={`text-xs font-medium ${outlook.color}`}>
-                              {outlook.label}
-                            </span>
+                            {q.fiftyTwoWeekHigh && q.price > 0 && (() => {
+                              const disc = ((q.fiftyTwoWeekHigh - q.price) / q.fiftyTwoWeekHigh) * 100;
+                              return disc >= 5 ? (
+                                <span className="rounded-full bg-red-400/10 px-2 py-0.5 text-[10px] font-medium text-red-400">
+                                  -{disc.toFixed(0)}% from peak
+                                </span>
+                              ) : null;
+                            })()}
                           </div>
                           <p className="text-xs text-zinc-500">{q.name}</p>
                         </div>
@@ -310,14 +333,66 @@ export default function OpportunitiesPage() {
                         </div>
                       </div>
 
-                      {/* Price range bar */}
-                      <div className="mt-3">
-                        <div className="flex justify-between text-[10px] text-zinc-500">
-                          <span>52W Low: {formatCurrency(q.fiftyTwoWeekLow || 0, tickerCurrency(q.ticker))}</span>
-                          <span>52W High: {formatCurrency(q.high, tickerCurrency(q.ticker))}</span>
+                      {/* Score breakdown bar */}
+                      <div className="mt-3 grid grid-cols-4 gap-2">
+                        {[
+                          { label: "Value", value: score.value, color: "bg-blue-500" },
+                          { label: "Momentum", value: score.momentum, color: "bg-purple-500" },
+                          { label: "Quality", value: score.quality, color: "bg-amber-500" },
+                          { label: "Analyst", value: score.analystSentiment, color: "bg-emerald-500" },
+                        ].map((s) => (
+                          <div key={s.label}>
+                            <div className="flex items-center justify-between text-[10px] text-zinc-500">
+                              <span>{s.label}</span>
+                              <span>{s.value.toFixed(0)}</span>
+                            </div>
+                            <div className="mt-0.5 h-1.5 rounded-full bg-zinc-700">
+                              <div
+                                className={`h-1.5 rounded-full ${s.color} transition-all`}
+                                style={{ width: `${s.value}%` }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Key fundamentals */}
+                      {fund && (
+                        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-zinc-400">
+                          {fund.forwardPE != null && <span>Fwd P/E: <span className="text-zinc-300">{fund.forwardPE.toFixed(1)}</span></span>}
+                          {fund.pegRatio != null && fund.pegRatio > 0 && <span>PEG: <span className="text-zinc-300">{fund.pegRatio.toFixed(2)}</span></span>}
+                          {fund.earningsGrowth != null && <span>Earnings: <span className={gainColor(fund.earningsGrowth)}>{(fund.earningsGrowth * 100).toFixed(0)}%</span></span>}
+                          {fund.dividendYield != null && fund.dividendYield > 0 && <span>Yield: <span className="text-zinc-300">{(fund.dividendYield * 100).toFixed(1)}%</span></span>}
+                          {fund.targetMeanPrice != null && <span>Target: <span className="text-zinc-300">{formatCurrency(fund.targetMeanPrice, tickerCurrency(q.ticker))}</span></span>}
+                          {fund.fiftyDayAverage != null && <span>50MA: <span className="text-zinc-300">{formatCurrency(fund.fiftyDayAverage, tickerCurrency(q.ticker))}</span></span>}
+                          {fund.twoHundredDayAverage != null && <span>200MA: <span className="text-zinc-300">{formatCurrency(fund.twoHundredDayAverage, tickerCurrency(q.ticker))}</span></span>}
+                          {rsi != null && <span>RSI: <span className={rsi < 30 ? "text-red-400" : rsi > 70 ? "text-amber-400" : "text-zinc-300"}>{rsi.toFixed(0)}</span></span>}
+                          {fund.beta != null && <span>Beta: <span className="text-zinc-300">{fund.beta.toFixed(2)}</span></span>}
                         </div>
-                        <div className="relative mt-1 h-2 rounded-full bg-zinc-700">
-                          {q.fiftyTwoWeekLow && q.fiftyTwoWeekHigh && q.fiftyTwoWeekHigh > q.fiftyTwoWeekLow && (
+                      )}
+
+                      {/* Signals */}
+                      {score.signals.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {score.signals.slice(0, 5).map((sig, i) => (
+                            <span
+                              key={i}
+                              className="rounded-full bg-zinc-700/50 px-2 py-0.5 text-[10px] text-zinc-400"
+                            >
+                              {sig}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* 52-week range bar */}
+                      {q.fiftyTwoWeekLow && q.fiftyTwoWeekHigh && q.fiftyTwoWeekHigh > q.fiftyTwoWeekLow && (
+                        <div className="mt-3">
+                          <div className="flex justify-between text-[10px] text-zinc-500">
+                            <span>52W Low: {formatCurrency(q.fiftyTwoWeekLow, tickerCurrency(q.ticker))}</span>
+                            <span>52W High: {formatCurrency(q.fiftyTwoWeekHigh, tickerCurrency(q.ticker))}</span>
+                          </div>
+                          <div className="relative mt-1 h-2 rounded-full bg-zinc-700">
                             <div
                               className="absolute top-0 h-2 w-2 rounded-full bg-amber-400"
                               style={{
@@ -325,10 +400,9 @@ export default function OpportunitiesPage() {
                                 transform: "translateX(-50%)",
                               }}
                             />
-                          )}
+                          </div>
                         </div>
-                        <p className="mt-1 text-[10px] text-zinc-600">{outlook.detail}</p>
-                      </div>
+                      )}
 
                       {/* Related news */}
                       {news.length > 0 && (
@@ -350,11 +424,76 @@ export default function OpportunitiesPage() {
                           ))}
                         </div>
                       )}
-                      {news.length === 0 && (
-                        <div className="mt-3 border-t border-zinc-700/50 pt-2">
-                          <p className="text-[10px] text-zinc-600">
-                            No specific news found. Check broader market conditions — drops may be driven by sector rotation, interest rates, or macroeconomic trends.
-                          </p>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-500">Loading stock data...</p>
+            )}
+          </div>
+
+          {/* Discounted from Peak — now sorted by composite score */}
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+            <h2 className="mb-1 font-semibold text-white">Discounted from Peak</h2>
+            <p className="mb-3 text-xs text-zinc-400">
+              Stocks 5%+ below their 52-week high, ranked by composite score. Higher-scored dips are more likely to be genuine opportunities.
+            </p>
+            {loading ? (
+              <div className="flex h-32 items-center justify-center">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400" />
+              </div>
+            ) : discountedFromPeak.length > 0 ? (
+              <div className="space-y-2">
+                {discountedFromPeak.map(({ quote: q, fund, score, discount, high }) => {
+                  const sl = scoreLabel(score.total);
+                  const news = getNewsForTicker(q.ticker, q.name);
+
+                  return (
+                    <div
+                      key={q.ticker}
+                      className="rounded-lg border border-zinc-700 bg-zinc-800/50 px-4 py-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-white">{q.ticker}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${sl.color} ${sl.bg}/10`}>
+                            {score.total.toFixed(0)}
+                          </span>
+                          <span className="rounded-full bg-red-400/10 px-2 py-0.5 text-[10px] font-medium text-red-400">
+                            -{discount.toFixed(1)}% from peak
+                          </span>
+                          <span className="text-xs text-zinc-500">{q.name}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm text-zinc-300">
+                            {formatCurrency(q.price, tickerCurrency(q.ticker))}
+                          </span>
+                          <span className={`text-xs ${gainColor(q.changePercent)}`}>
+                            {formatPercent(q.changePercent)}
+                          </span>
+                        </div>
+                      </div>
+                      {fund?.targetMeanPrice && (
+                        <div className="mt-1 text-[10px] text-zinc-500">
+                          Analyst target: {formatCurrency(fund.targetMeanPrice, tickerCurrency(q.ticker))}
+                          {fund.recommendationKey && ` (${fund.recommendationKey})`}
+                          {fund.earningsGrowth != null && ` | Earnings growth: ${(fund.earningsGrowth * 100).toFixed(0)}%`}
+                        </div>
+                      )}
+                      {news.length > 0 && (
+                        <div className="mt-1">
+                          {news.map((article, i) => (
+                            <a
+                              key={i}
+                              href={article.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block text-[10px] text-zinc-500 hover:text-emerald-400"
+                            >
+                              {article.title} — {article.source}
+                            </a>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -363,91 +502,6 @@ export default function OpportunitiesPage() {
               </div>
             ) : (
               <p className="text-sm text-zinc-500">No significantly discounted stocks found.</p>
-            )}
-          </div>
-
-          {/* Near 52-Week Low */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-            <h2 className="mb-1 font-semibold text-white">Near 52-Week Lows</h2>
-            <p className="mb-3 text-xs text-zinc-400">
-              Stocks trading closest to their 52-week low with context on why they&apos;re down.
-            </p>
-            {loading ? (
-              <div className="flex h-32 items-center justify-center">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400" />
-              </div>
-            ) : nearLow.length > 0 ? (
-              <div className="space-y-3">
-                {nearLow.map((q) => {
-                  const news = getNewsForTicker(q.ticker, q.name);
-                  const outlook = getOutlook(q.price, q.fiftyTwoWeekLow, q.fiftyTwoWeekHigh);
-
-                  return (
-                    <div
-                      key={q.ticker}
-                      className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-white">{q.ticker}</span>
-                            <span className="rounded-full bg-amber-400/10 px-2 py-0.5 text-xs font-medium text-amber-400">
-                              +{q.distFromLow.toFixed(1)}% from low
-                            </span>
-                            <span className={`text-xs font-medium ${outlook.color}`}>
-                              {outlook.label}
-                            </span>
-                          </div>
-                          <p className="text-xs text-zinc-500">{q.name}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-medium text-zinc-200">
-                            {formatCurrency(q.price, tickerCurrency(q.ticker))}
-                          </p>
-                          <p className={`text-xs ${gainColor(q.changePercent)}`}>
-                            {formatPercent(q.changePercent)} today
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Price context */}
-                      <div className="mt-2 flex gap-4 text-xs text-zinc-500">
-                        <span>Low: <span className="text-red-400">{formatCurrency(q.fiftyTwoWeekLow || 0, tickerCurrency(q.ticker))}</span></span>
-                        <span>High: <span className="text-emerald-400">{formatCurrency(q.fiftyTwoWeekHigh || 0, tickerCurrency(q.ticker))}</span></span>
-                      </div>
-                      <p className="mt-1 text-[10px] text-zinc-600">{outlook.detail}</p>
-
-                      {/* Related news */}
-                      {news.length > 0 && (
-                        <div className="mt-2 border-t border-zinc-700/50 pt-2">
-                          <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-                            Why it&apos;s down
-                          </p>
-                          {news.map((article, i) => (
-                            <a
-                              key={i}
-                              href={article.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="mt-1 block text-xs text-zinc-400 hover:text-emerald-400"
-                            >
-                              {article.title}
-                              <span className="ml-1 text-zinc-600">— {article.source}</span>
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                      {news.length === 0 && (
-                        <p className="mt-2 text-[10px] text-zinc-600">
-                          No specific news found. The drop may be sector-wide or driven by broader economic factors.
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-sm text-zinc-500">No data available.</p>
             )}
           </div>
         </>

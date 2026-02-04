@@ -235,6 +235,230 @@ async function fetchHistoryData(symbols: string, range: string): Promise<StockHi
   }
 }
 
+// ─── Fundamentals (P/E, analyst targets, etc.) ─────────────────────
+
+export interface FundamentalData {
+  ticker: string;
+  trailingPE: number | null;
+  forwardPE: number | null;
+  pegRatio: number | null;
+  priceToBook: number | null;
+  earningsGrowth: number | null;
+  revenueGrowth: number | null;
+  profitMargin: number | null;
+  returnOnEquity: number | null;
+  dividendYield: number | null;
+  trailingAnnualDividendYield: number | null;
+  targetMeanPrice: number | null;
+  targetHighPrice: number | null;
+  targetLowPrice: number | null;
+  recommendationKey: string | null;
+  recommendationMean: number | null;
+  numberOfAnalystOpinions: number | null;
+  fiftyDayAverage: number | null;
+  twoHundredDayAverage: number | null;
+  beta: number | null;
+  shortPercentOfFloat: number | null;
+}
+
+const fundCacheMap: Record<string, { data: Record<string, FundamentalData>; timestamp: number }> = {};
+const FUND_CACHE_TTL = 300_000; // 5 minutes
+
+async function fetchFundData(symbolsKey: string): Promise<Record<string, FundamentalData>> {
+  const cached = fundCacheMap[symbolsKey];
+  if (cached && Date.now() - cached.timestamp < FUND_CACHE_TTL) {
+    return cached.data;
+  }
+  try {
+    const res = await fetch(`/api/fundamentals?symbols=${symbolsKey}`);
+    const json = await res.json();
+    const map: Record<string, FundamentalData> = {};
+    for (const item of json.data || []) {
+      map[item.ticker] = item;
+    }
+    fundCacheMap[symbolsKey] = { data: map, timestamp: Date.now() };
+    return map;
+  } catch {
+    return cached?.data || {};
+  }
+}
+
+export function useFundamentals(tickers: string[]) {
+  const [data, setData] = useState<Record<string, FundamentalData>>({});
+  const [loading, setLoading] = useState(false);
+  const tickersKey = tickers.join(",");
+  const lastSnapshot = useRef("");
+
+  useEffect(() => {
+    if (!tickersKey) { setData({}); return; }
+    let cancelled = false;
+    setLoading(true);
+    fetchFundData(tickersKey).then((result) => {
+      if (cancelled) return;
+      const snap = JSON.stringify(result);
+      if (snap !== lastSnapshot.current) {
+        lastSnapshot.current = snap;
+        setData(result);
+      }
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [tickersKey]);
+
+  return { fundamentals: data, loading };
+}
+
+// ─── Technical indicators (calculated from price history) ───────────
+
+export function calculateRSI(prices: number[], period = 14): number | null {
+  if (prices.length < period + 1) return null;
+
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const change = prices[i] - prices[i - 1];
+    if (change > 0) avgGain += change;
+    else avgLoss += Math.abs(change);
+  }
+  avgGain /= period;
+  avgLoss /= period;
+
+  // Smoothed RSI using all remaining data points
+  for (let i = period + 1; i < prices.length; i++) {
+    const change = prices[i] - prices[i - 1];
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? Math.abs(change) : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - 100 / (1 + rs);
+}
+
+// Compute a composite score (0-100) from fundamentals + technicals
+export interface CompositeScore {
+  total: number;
+  value: number;
+  momentum: number;
+  quality: number;
+  analystSentiment: number;
+  signals: string[];
+}
+
+export function computeCompositeScore(
+  quote: StockQuote,
+  fund: FundamentalData | undefined,
+  rsi?: number | null,
+): CompositeScore {
+  const signals: string[] = [];
+  let valueScore = 50;
+  let momentumScore = 50;
+  let qualityScore = 50;
+  let analystScore = 50;
+
+  if (fund) {
+    // ── Value scoring ──
+    if (fund.forwardPE != null && fund.forwardPE > 0) {
+      if (fund.forwardPE < 12) { valueScore += 20; signals.push("Low forward P/E (<12)"); }
+      else if (fund.forwardPE < 18) { valueScore += 10; signals.push("Moderate forward P/E"); }
+      else if (fund.forwardPE > 35) { valueScore -= 15; signals.push("High forward P/E (>35)"); }
+    }
+    if (fund.pegRatio != null && fund.pegRatio > 0) {
+      if (fund.pegRatio < 1) { valueScore += 15; signals.push("PEG < 1 (undervalued vs growth)"); }
+      else if (fund.pegRatio < 1.5) { valueScore += 5; }
+      else if (fund.pegRatio > 3) { valueScore -= 10; signals.push("High PEG ratio (>3)"); }
+    }
+    if (fund.priceToBook != null && fund.priceToBook > 0) {
+      if (fund.priceToBook < 1.5) { valueScore += 10; signals.push("Low price-to-book"); }
+      else if (fund.priceToBook > 10) { valueScore -= 5; }
+    }
+    if (fund.targetMeanPrice != null && quote.price > 0) {
+      const upside = ((fund.targetMeanPrice - quote.price) / quote.price) * 100;
+      if (upside > 20) { valueScore += 15; signals.push(`Analyst target ${upside.toFixed(0)}% above price`); }
+      else if (upside > 10) { valueScore += 8; signals.push(`Analyst target ${upside.toFixed(0)}% above price`); }
+      else if (upside < -10) { valueScore -= 10; signals.push("Analyst target below current price"); }
+    }
+
+    // ── Momentum scoring ──
+    if (fund.fiftyDayAverage != null && quote.price > 0) {
+      const pctAbove50 = ((quote.price - fund.fiftyDayAverage) / fund.fiftyDayAverage) * 100;
+      if (pctAbove50 > 3) { momentumScore += 15; signals.push("Price above 50-day MA"); }
+      else if (pctAbove50 < -5) { momentumScore -= 10; signals.push("Price below 50-day MA"); }
+    }
+    if (fund.twoHundredDayAverage != null && quote.price > 0) {
+      const pctAbove200 = ((quote.price - fund.twoHundredDayAverage) / fund.twoHundredDayAverage) * 100;
+      if (pctAbove200 > 5) { momentumScore += 15; signals.push("Price above 200-day MA"); }
+      else if (pctAbove200 < -10) { momentumScore -= 15; signals.push("Price well below 200-day MA"); }
+    }
+    if (fund.fiftyDayAverage != null && fund.twoHundredDayAverage != null) {
+      if (fund.fiftyDayAverage > fund.twoHundredDayAverage) {
+        momentumScore += 10; signals.push("Golden cross (50MA > 200MA)");
+      } else {
+        momentumScore -= 10; signals.push("Death cross (50MA < 200MA)");
+      }
+    }
+
+    // ── Quality scoring ──
+    if (fund.earningsGrowth != null) {
+      if (fund.earningsGrowth > 0.15) { qualityScore += 20; signals.push(`Earnings growth ${(fund.earningsGrowth * 100).toFixed(0)}%`); }
+      else if (fund.earningsGrowth > 0) { qualityScore += 10; }
+      else { qualityScore -= 10; signals.push("Negative earnings growth"); }
+    }
+    if (fund.revenueGrowth != null) {
+      if (fund.revenueGrowth > 0.10) { qualityScore += 10; signals.push(`Revenue growth ${(fund.revenueGrowth * 100).toFixed(0)}%`); }
+      else if (fund.revenueGrowth < -0.05) { qualityScore -= 10; }
+    }
+    if (fund.returnOnEquity != null) {
+      if (fund.returnOnEquity > 0.20) { qualityScore += 10; signals.push("Strong return on equity (>20%)"); }
+      else if (fund.returnOnEquity < 0) { qualityScore -= 10; }
+    }
+    if (fund.profitMargin != null) {
+      if (fund.profitMargin > 0.20) { qualityScore += 5; }
+      else if (fund.profitMargin < 0) { qualityScore -= 10; signals.push("Negative profit margin"); }
+    }
+
+    // ── Analyst sentiment ──
+    if (fund.recommendationMean != null) {
+      if (fund.recommendationMean <= 2) { analystScore += 20; signals.push(`Analyst consensus: ${fund.recommendationKey || "buy"}`); }
+      else if (fund.recommendationMean <= 2.5) { analystScore += 10; signals.push(`Analyst consensus: ${fund.recommendationKey || "buy"}`); }
+      else if (fund.recommendationMean >= 4) { analystScore -= 20; signals.push(`Analyst consensus: ${fund.recommendationKey || "sell"}`); }
+      else { signals.push(`Analyst consensus: ${fund.recommendationKey || "hold"}`); }
+    }
+
+    if (fund.dividendYield != null && fund.dividendYield > 0.03) {
+      qualityScore += 5; signals.push(`Dividend yield ${(fund.dividendYield * 100).toFixed(1)}%`);
+    }
+  }
+
+  // RSI
+  if (rsi != null) {
+    if (rsi < 30) { momentumScore += 15; signals.push(`RSI oversold (${rsi.toFixed(0)})`); }
+    else if (rsi > 70) { momentumScore -= 10; signals.push(`RSI overbought (${rsi.toFixed(0)})`); }
+  }
+
+  // 52-week range position
+  if (quote.fiftyTwoWeekLow && quote.fiftyTwoWeekHigh && quote.fiftyTwoWeekHigh > quote.fiftyTwoWeekLow) {
+    const position = (quote.price - quote.fiftyTwoWeekLow) / (quote.fiftyTwoWeekHigh - quote.fiftyTwoWeekLow);
+    if (position < 0.25) { valueScore += 10; }
+    else if (position > 0.9) { valueScore -= 5; }
+  }
+
+  const clamp = (v: number) => Math.max(0, Math.min(100, v));
+  valueScore = clamp(valueScore);
+  momentumScore = clamp(momentumScore);
+  qualityScore = clamp(qualityScore);
+  analystScore = clamp(analystScore);
+
+  // Weighted: value 30%, momentum 25%, quality 25%, analyst 20%
+  const total = clamp(
+    valueScore * 0.30 + momentumScore * 0.25 + qualityScore * 0.25 + analystScore * 0.20
+  );
+
+  return { total, value: valueScore, momentum: momentumScore, quality: qualityScore, analystSentiment: analystScore, signals };
+}
+
 export function useStockHistory(tickers: string[], range = "3mo") {
   const [data, setData] = useState<StockHistory[]>([]);
   const [loading, setLoading] = useState(false);

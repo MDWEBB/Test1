@@ -49,6 +49,32 @@ and how the investment suggestion logic operates.
 - **Category filters available**: tariffs/trade, earnings, Australia-specific
 - **Caching**: 5-minute revalidation via Next.js fetch caching
 
+### Fundamental Data (P/E, Analyst Targets, Moving Averages)
+
+- **Source**: Yahoo Finance v10 quoteSummary API (public, no API key required)
+- **Endpoint**: `https://query2.finance.yahoo.com/v10/finance/quoteSummary/{SYMBOL}`
+- **Modules fetched**: `financialData`, `defaultKeyStatistics`, `summaryDetail`,
+  `recommendationTrend`, `earningsTrend`
+- **Data returned per stock**:
+  - Valuation: trailing P/E, forward P/E, PEG ratio, price-to-book
+  - Growth: quarterly earnings growth, revenue growth
+  - Profitability: profit margin, return on equity
+  - Dividends: dividend yield, trailing annual yield
+  - Analyst consensus: target mean/high/low price, recommendation key (buy/hold/sell),
+    recommendation mean (1-5 scale), number of analyst opinions
+  - Moving averages: 50-day average, 200-day average (pre-calculated by Yahoo)
+  - Risk: beta, short percent of float
+- **Caching**: Server-side 5-minute in-memory cache; client-side 5-minute module-level cache
+- **Rate limiting**: Fetched in batches of 5 to avoid overwhelming Yahoo Finance
+
+### Technical Indicators (Calculated Locally)
+
+- **RSI (Relative Strength Index)**: Calculated from 3-month daily price history using
+  the standard 14-period smoothed RSI formula. Values below 30 indicate oversold conditions;
+  above 70 indicates overbought.
+- **Moving average crossovers**: Golden cross (50MA > 200MA) and death cross (50MA < 200MA)
+  are detected from Yahoo's pre-calculated 50-day and 200-day moving averages.
+
 ### Portfolio Data (Your Holdings)
 
 - **Source**: Your browser's localStorage — no server, no database, no cloud
@@ -117,6 +143,11 @@ The remaining budget is distributed across ETF categories based on strategy weig
 
 Within each category, the ETF with the **lowest management fee** is selected.
 
+**Fundamental data on suggestions**: Each ETF suggestion card shows available fundamental
+metrics (dividend yield, P/E ratio, 50-day and 200-day moving averages, beta, analyst
+consensus) fetched from Yahoo Finance, helping you evaluate each suggestion beyond just
+the category allocation.
+
 **ETFs filtered by currency**: When AUD is selected, only ASX-listed ETFs are shown.
 When USD is selected, only US-listed ETFs are shown.
 
@@ -151,18 +182,43 @@ Three tabs with different analysis approaches:
 
 **Value & Underpriced tab**:
 - Tracks ~26 popular US and ASX tickers plus your holdings and watchlist
-- **Discounted from Peak**: Calculates `(52-week high − current price) / 52-week high × 100`
-  for each stock. Shows stocks with at least 5% discount, sorted by largest discount first.
-- **Near 52-Week Lows**: Calculates `(current price − 52-week low) / 52-week low × 100`.
-  Shows the 8 stocks closest to their 52-week low.
-- **Outlook labels** based on position in 52-week range:
-  - **Deep Value** (bottom 15%): "High risk, potentially high reward if fundamentals are solid"
-  - **Potential Value** (15-35%): "May be oversold — check recent earnings and news"
-  - **Mid-Range** (35-55%): "Fair pricing unless a catalyst changes the outlook"
-  - **Near Highs** (above 55%): "Momentum is positive but less room for upside"
-- **News matching**: For each discounted stock, the app searches fetched RSS articles for
-  mentions of the ticker symbol or company name. Matched headlines are shown as "Recent News"
-  or "Why it's down" to provide context on the price drop.
+- Uses a **composite scoring system** (0-100) combining four dimensions:
+
+**Composite Score (0-100)**:
+Each stock gets a score based on four weighted dimensions:
+
+| Dimension        | Weight | What it measures                                      |
+|------------------|--------|-------------------------------------------------------|
+| Value (30%)      | 0.30   | Forward P/E, PEG ratio, price-to-book, analyst target upside, 52-week position |
+| Momentum (25%)   | 0.25   | Price vs 50-day MA, price vs 200-day MA, golden/death cross, RSI |
+| Quality (25%)    | 0.25   | Earnings growth, revenue growth, return on equity, profit margin, dividend yield |
+| Analyst (20%)    | 0.20   | Analyst buy/hold/sell consensus and recommendation mean |
+
+Each dimension starts at 50 and adjusts up/down based on specific thresholds:
+- **Value example**: Forward P/E < 12 adds +20, PEG < 1 adds +15, analyst target 20%+ above
+  price adds +15
+- **Momentum example**: Price above 50-day MA adds +15, golden cross adds +10, RSI < 30
+  (oversold) adds +15
+- **Quality example**: Earnings growth > 15% adds +20, ROE > 20% adds +10
+- **Analyst example**: Mean recommendation ≤ 2.0 (buy) adds +20
+
+Score labels:
+- **Strong** (70+): Multiple positive signals across dimensions
+- **Good** (55-69): More positives than negatives
+- **Neutral** (40-54): Mixed signals
+- **Weak** (25-39): More negatives than positives
+- **Poor** (<25): Multiple negative signals
+
+**Top Ranked Stocks**: All tracked stocks ranked by composite score, showing the score
+breakdown bars, key fundamental metrics (P/E, PEG, earnings growth, yield, targets, MAs,
+RSI, beta), and the individual signals that contributed to the score.
+
+**Discounted from Peak**: Stocks 5%+ below their 52-week high, but now sorted by composite
+score instead of just discount percentage. This means a 10% dip with strong fundamentals
+and analyst support ranks higher than a 30% dip with deteriorating earnings.
+
+- **News matching**: For each discounted stock, RSS articles are searched for mentions
+  of the ticker or company name. Headlines shown for context on price drops.
 
 **Today's Movers tab**:
 - Sorts all tracked stocks by absolute daily percentage change
@@ -190,18 +246,23 @@ Articles are sorted newest-first, limited to 50 results.
 - **No server state**: The Next.js server only proxies and caches Yahoo Finance / RSS
   requests. It stores nothing permanently.
 - **Caching strategy**: Three layers prevent excessive API calls:
-  1. Server-side in-memory cache (60s quotes, 5min history)
-  2. Client-side module-level cache outside React (30s quotes, 5min history)
+  1. Server-side in-memory cache (60s quotes, 5min history, 5min fundamentals)
+  2. Client-side module-level cache outside React (30s quotes, 5min history, 5min fundamentals)
   3. JSON snapshot comparison before React state updates (prevents re-renders with
      identical data)
+- **Composite scoring engine**: Runs client-side combining price data, fundamentals, and
+  technical indicators into a weighted 0-100 score for each stock
 
 ---
 
 ## Disclaimer
 
 This application is a portfolio tracking and visualisation tool. The investment
-suggestions, opportunities analysis, and beginner picks are based on simple
-quantitative metrics (price relative to 52-week range, category-weighted allocation)
-and a curated list of well-known ETFs. They are **not financial advice**. Always
-conduct your own research and consider consulting a licensed financial adviser
-before making investment decisions.
+suggestions, composite scores, and opportunities analysis are based on quantitative
+metrics (fundamental ratios, technical indicators, analyst consensus, price data)
+and a curated list of well-known ETFs. The composite scoring system is a simplified
+model — it does not account for macroeconomic conditions, sector-specific risks,
+company-specific events, or your personal financial situation. Scores should be
+treated as a starting point for research, not a buy/sell signal. This is **not
+financial advice**. Always conduct your own research and consider consulting a
+licensed financial adviser before making investment decisions.
