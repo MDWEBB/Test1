@@ -97,7 +97,52 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
       prev.map((h) => {
         if (h.id !== holdingId) return h;
 
-        const newTransaction: Transaction = { ...transaction, id: generateId() };
+        // Calculate current avgCost before this transaction (for sells)
+        let runningShares = 0;
+        let runningCost = 0;
+        for (const t of h.transactions || []) {
+          if (t.type === "buy") {
+            runningCost += t.shares * t.pricePerShare;
+            runningShares += t.shares;
+          } else {
+            runningShares -= t.shares;
+          }
+        }
+        const currentAvgCost = runningShares > 0 ? runningCost / runningShares : h.avgCost;
+
+        // Build the new transaction with CGT fields if it's a sell
+        let newTransaction: Transaction = { ...transaction, id: generateId() };
+
+        if (transaction.type === "sell") {
+          const costBase = currentAvgCost;
+          const realizedGain = (transaction.pricePerShare - costBase) * transaction.shares;
+
+          // Check if CGT discount applies (held > 12 months)
+          // Find the earliest buy transaction to determine holding period
+          const buyTransactions = (h.transactions || [])
+            .filter((t) => t.type === "buy")
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+          const firstBuyDate = buyTransactions[0]?.date;
+          const saleDate = new Date(transaction.date);
+          const oneYearAgo = new Date(saleDate);
+          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+
+          const cgtDiscount = firstBuyDate
+            ? new Date(firstBuyDate) <= oneYearAgo && realizedGain > 0
+            : false;
+
+          const discountedGain = cgtDiscount ? realizedGain * 0.5 : realizedGain;
+
+          newTransaction = {
+            ...newTransaction,
+            costBase,
+            realizedGain,
+            cgtDiscount,
+            discountedGain,
+          };
+        }
+
         const transactions = [...(h.transactions || []), newTransaction];
 
         // Recalculate shares and avgCost from all transactions
@@ -109,7 +154,10 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
             totalCost += t.shares * t.pricePerShare;
             totalShares += t.shares;
           } else {
-            // For sells, reduce shares but don't affect avgCost calculation
+            // For sells, reduce shares but keep avgCost based on remaining cost pool
+            // Reduce cost pool proportionally
+            const soldCost = t.shares * (totalShares > 0 ? totalCost / totalShares : t.costBase || 0);
+            totalCost -= soldCost;
             totalShares -= t.shares;
           }
         }
@@ -118,7 +166,7 @@ export function PortfolioProvider({ children }: { children: React.ReactNode }) {
 
         return {
           ...h,
-          shares: totalShares,
+          shares: Math.max(0, totalShares),
           avgCost,
           transactions,
         };

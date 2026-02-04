@@ -8,6 +8,21 @@ export interface Transaction {
   totalAmount: number; // shares * pricePerShare
   type: "buy" | "sell";
   notes?: string;
+  // CGT fields for sell transactions
+  costBase?: number;          // Average cost per share at time of sale
+  realizedGain?: number;      // Gain/loss before any discount
+  cgtDiscount?: boolean;      // True if held >12 months (50% discount applies)
+  discountedGain?: number;    // Gain after 50% CGT discount (if applicable)
+}
+
+// Summary of capital gains for tax reporting
+export interface CGTSummary {
+  financialYear: string;      // e.g., "2024-25"
+  totalRealizedGains: number; // Before discount
+  totalRealizedLosses: number;
+  discountedGains: number;    // After 50% discount on eligible gains
+  netCapitalGain: number;     // What you'll be taxed on
+  transactions: Transaction[]; // All sell transactions in this FY
 }
 
 export interface Holding {
