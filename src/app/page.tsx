@@ -1,18 +1,45 @@
 "use client";
 
-import { usePortfolioSummary, useNews } from "@/lib/hooks";
+import { useState } from "react";
+import { usePortfolioSummary, useNews, useStockHistory, toYahooTicker } from "@/lib/hooks";
 import { usePortfolio } from "@/lib/portfolio-context";
 import { StatCard } from "@/components/stat-card";
 import { HoldingsTable } from "@/components/holdings-table";
 import { PortfolioChart } from "@/components/portfolio-chart";
+import { PriceChart } from "@/components/price-chart";
 import { NewsCard } from "@/components/news-card";
 import { formatCurrency, formatPercent, gainColor } from "@/lib/format";
 import Link from "next/link";
+
+const RANGE_OPTIONS = [
+  { label: "1M", value: "1mo" },
+  { label: "3M", value: "3mo" },
+  { label: "6M", value: "6mo" },
+  { label: "1Y", value: "1y" },
+  { label: "2Y", value: "2y" },
+] as const;
 
 export default function Dashboard() {
   const { holdings: rawHoldings } = usePortfolio();
   const summary = usePortfolioSummary();
   const tickerQuery = rawHoldings.map((h) => h.ticker.toLowerCase()).join(",");
+  const [selectedTickers, setSelectedTickers] = useState<string[]>([]);
+  const [chartRange, setChartRange] = useState("3mo");
+
+  // Convert selected tickers to Yahoo format for the history API
+  const yahooTickers = selectedTickers.map((t) => {
+    const holding = rawHoldings.find((h) => h.ticker === t);
+    return toYahooTicker(t, holding?.market || "US");
+  });
+  const { data: historyData, loading: historyLoading } = useStockHistory(yahooTickers, chartRange);
+
+  function toggleTicker(ticker: string) {
+    setSelectedTickers((prev) =>
+      prev.includes(ticker)
+        ? prev.filter((t) => t !== ticker)
+        : [...prev, ticker]
+    );
+  }
   const { articles, loading: newsLoading } = useNews(tickerQuery || undefined);
 
   // Check if portfolio has mixed currencies
@@ -165,25 +192,148 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Holdings Table */}
+      {/* Holdings Table — clickable rows to select for chart */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="font-semibold text-white">Holdings</h2>
-          <Link
-            href="/holdings"
-            className="text-sm text-emerald-400 hover:text-emerald-300"
-          >
-            Manage
-          </Link>
+          <div className="flex items-center gap-3">
+            {selectedTickers.length > 0 && (
+              <button
+                onClick={() => setSelectedTickers([])}
+                className="text-xs text-zinc-500 hover:text-zinc-300"
+              >
+                Clear selection
+              </button>
+            )}
+            <Link
+              href="/holdings"
+              className="text-sm text-emerald-400 hover:text-emerald-300"
+            >
+              Manage
+            </Link>
+          </div>
         </div>
         {summary.loading ? (
           <div className="flex h-32 items-center justify-center">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400" />
           </div>
+        ) : summary.holdings.length === 0 ? (
+          <div className="flex h-32 items-center justify-center text-zinc-500">
+            No holdings yet. Add your first stock or ETF.
+          </div>
         ) : (
-          <HoldingsTable holdings={summary.holdings} compact />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800 text-left text-zinc-500">
+                  <th className="px-3 py-2 font-medium">Ticker</th>
+                  <th className="px-3 py-2 font-medium">Shares</th>
+                  <th className="px-3 py-2 font-medium text-right">Price</th>
+                  <th className="px-3 py-2 font-medium text-right">Value</th>
+                  <th className="px-3 py-2 font-medium text-right">Gain/Loss</th>
+                  <th className="px-3 py-2 font-medium text-right">Day</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.holdings
+                  .sort((a, b) => b.marketValue - a.marketValue)
+                  .map((h) => {
+                    const isSelected = selectedTickers.includes(h.ticker);
+                    return (
+                      <tr
+                        key={h.id}
+                        onClick={() => toggleTicker(h.ticker)}
+                        className={`cursor-pointer border-b border-zinc-800/50 transition-colors ${
+                          isSelected
+                            ? "bg-emerald-400/10 hover:bg-emerald-400/15"
+                            : "hover:bg-zinc-800/30"
+                        }`}
+                      >
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`inline-flex h-4 w-4 items-center justify-center rounded border text-[10px] ${
+                                isSelected
+                                  ? "border-emerald-400 bg-emerald-400 text-black"
+                                  : "border-zinc-600 text-transparent"
+                              }`}
+                            >
+                              {isSelected ? "✓" : ""}
+                            </span>
+                            <span className="font-medium text-white">{h.ticker}</span>
+                            <span className={`rounded px-1 py-0.5 text-[10px] font-medium ${
+                              h.market === "ASX"
+                                ? "bg-yellow-400/10 text-yellow-400"
+                                : "bg-blue-400/10 text-blue-400"
+                            }`}>
+                              {h.market || "US"}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-zinc-300">{h.shares}</td>
+                        <td className="px-3 py-3 text-right text-zinc-300">
+                          {formatCurrency(h.currentPrice, h.market === "ASX" ? "AUD" : "USD")}
+                        </td>
+                        <td className="px-3 py-3 text-right font-medium text-white">
+                          {formatCurrency(h.marketValue, h.market === "ASX" ? "AUD" : "USD")}
+                        </td>
+                        <td className={`px-3 py-3 text-right font-medium ${gainColor(h.gain)}`}>
+                          {formatCurrency(h.gain, h.market === "ASX" ? "AUD" : "USD")}
+                          <span className="ml-1 text-xs">({formatPercent(h.gainPercent)})</span>
+                        </td>
+                        <td className={`px-3 py-3 text-right ${gainColor(h.dayChangePercent)}`}>
+                          {formatPercent(h.dayChangePercent)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+            {summary.holdings.length > 0 && selectedTickers.length === 0 && (
+              <p className="mt-2 text-center text-xs text-zinc-600">
+                Click a row to view price history
+              </p>
+            )}
+          </div>
         )}
       </div>
+
+      {/* Price History Chart */}
+      {(selectedTickers.length > 0 || historyLoading) && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="font-semibold text-white">Price History</h2>
+            <div className="flex gap-1">
+              {RANGE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setChartRange(opt.value)}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                    chartRange === opt.value
+                      ? "bg-emerald-400/20 text-emerald-400"
+                      : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            {selectedTickers.map((ticker) => (
+              <button
+                key={ticker}
+                onClick={() => toggleTicker(ticker)}
+                className="flex items-center gap-1 rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-400/20"
+              >
+                {ticker}
+                <span className="text-emerald-400/60">&times;</span>
+              </button>
+            ))}
+          </div>
+          <PriceChart histories={historyData} loading={historyLoading} />
+        </div>
+      )}
 
       {/* News */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">

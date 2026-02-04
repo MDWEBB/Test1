@@ -199,3 +199,70 @@ export function useNews(query?: string, category?: string) {
 
   return { articles, loading, refetch: fetchNews };
 }
+
+// ─── Stock history (for line charts) ────────────────────────────────
+
+export interface HistoryPoint {
+  date: string;
+  timestamp: number;
+  close: number;
+}
+
+export interface StockHistory {
+  ticker: string;
+  history: HistoryPoint[];
+}
+
+// Module-level cache for history data
+const historyCache: Record<string, { data: StockHistory[]; timestamp: number }> = {};
+const HISTORY_CACHE_TTL = 300_000; // 5 minutes
+
+async function fetchHistoryData(symbols: string, range: string): Promise<StockHistory[]> {
+  const cacheKey = `${symbols}_${range}`;
+  const cached = historyCache[cacheKey];
+  if (cached && Date.now() - cached.timestamp < HISTORY_CACHE_TTL) {
+    return cached.data;
+  }
+
+  try {
+    const res = await fetch(`/api/history?symbols=${symbols}&range=${range}`);
+    const json = await res.json();
+    const data: StockHistory[] = json.data || [];
+    historyCache[cacheKey] = { data, timestamp: Date.now() };
+    return data;
+  } catch {
+    return cached?.data || [];
+  }
+}
+
+export function useStockHistory(tickers: string[], range = "3mo") {
+  const [data, setData] = useState<StockHistory[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const tickersKey = tickers.join(",");
+  const lastSnapshot = useRef("");
+
+  useEffect(() => {
+    if (!tickersKey) {
+      setData([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+
+    fetchHistoryData(tickersKey, range).then((result) => {
+      if (cancelled) return;
+      const snap = JSON.stringify(result);
+      if (snap !== lastSnapshot.current) {
+        lastSnapshot.current = snap;
+        setData(result);
+      }
+      setLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [tickersKey, range]);
+
+  return { data, loading };
+}
