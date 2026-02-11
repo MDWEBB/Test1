@@ -18,9 +18,11 @@ interface CacheEntry {
 const CACHE_TTL = 30_000; // 30 seconds
 const POLL_INTERVAL = 300_000; // 5 minutes
 const MAX_FAILURES = 3;
+const FAILURE_RESET_TIME = 60_000; // Reset failure count after 1 minute
 
 const cache: Record<string, CacheEntry> = {};
 let globalFailCount = 0;
+let lastFailureTime = 0;
 let activeFetch: Promise<CacheEntry | null> | null = null;
 
 async function fetchStockData(tickersKey: string): Promise<CacheEntry | null> {
@@ -30,9 +32,16 @@ async function fetchStockData(tickersKey: string): Promise<CacheEntry | null> {
     return cached;
   }
 
-  // Too many failures — stop trying
-  if (globalFailCount >= MAX_FAILURES) {
-    return cached || null;
+  // Reset failure count if enough time has passed since last failure
+  if (globalFailCount >= MAX_FAILURES && Date.now() - lastFailureTime > FAILURE_RESET_TIME) {
+    globalFailCount = 0;
+  }
+
+  // Too many failures — return cached data if available, but still attempt fetch
+  // for new ticker sets (don't return null, as that leaves UI with no data)
+  const shouldSkipFetch = globalFailCount >= MAX_FAILURES && cached;
+  if (shouldSkipFetch) {
+    return cached;
   }
 
   // If a fetch is already in flight, wait for it instead of starting another
@@ -56,12 +65,14 @@ async function fetchStockData(tickersKey: string): Promise<CacheEntry | null> {
       cache[tickersKey] = entry;
       if (data.isMock) {
         globalFailCount++;
+        lastFailureTime = Date.now();
       } else {
         globalFailCount = 0;
       }
       return entry;
     } catch {
       globalFailCount++;
+      lastFailureTime = Date.now();
       return cache[tickersKey] || null;
     } finally {
       activeFetch = null;
