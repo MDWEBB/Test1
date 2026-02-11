@@ -66,6 +66,24 @@ async function fetchQuoteViaChart(symbol: string): Promise<YahooChartMeta | null
   return null;
 }
 
+// Helper to generate mock quote for a symbol
+function generateMockQuote(symbol: string) {
+  const h = stableHash(symbol);
+  const basePrice = 50 + (h % 300);
+  const change = ((h % 200) - 100) / 20;
+  return {
+    ticker: symbol,
+    name: symbol,
+    price: basePrice,
+    change,
+    changePercent: basePrice > 0 ? (change / basePrice) * 100 : 0,
+    dayHigh: basePrice + Math.abs(change),
+    dayLow: basePrice - Math.abs(change),
+    volume: 1000000 + (h % 9000000),
+    marketCap: (h % 900 + 100) * 1e9,
+  };
+}
+
 export async function GET(request: NextRequest) {
   const tickers = request.nextUrl.searchParams.get("tickers");
 
@@ -93,9 +111,15 @@ export async function GET(request: NextRequest) {
     // Fetch each symbol via the v8 chart endpoint
     const chartResults = await Promise.all(symbols.map(fetchQuoteViaChart));
 
+    let hasMock = false;
     const quotes = symbols.map((symbol, i) => {
       const meta = chartResults[i];
-      if (!meta) return null;
+
+      // If Yahoo didn't return data for this symbol, use mock data
+      if (!meta) {
+        hasMock = true;
+        return generateMockQuote(symbol);
+      }
 
       const price = meta.regularMarketPrice || 0;
       const prevClose = meta.chartPreviousClose || price;
@@ -117,31 +141,10 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    const validQuotes = quotes.filter(Boolean);
-
-    if (validQuotes.length > 0) {
-      responseBody = JSON.stringify({ quotes: validQuotes });
-    } else {
-      throw new Error("No valid quotes returned");
-    }
+    responseBody = JSON.stringify({ quotes, isMock: hasMock });
   } catch {
     // Return deterministic mock data so the UI doesn't flicker with random values
-    const mockQuotes = symbols.map((s) => {
-      const h = stableHash(s);
-      const basePrice = 50 + (h % 300);
-      const change = ((h % 200) - 100) / 20;
-      return {
-        ticker: s,
-        name: s,
-        price: basePrice,
-        change,
-        changePercent: basePrice > 0 ? (change / basePrice) * 100 : 0,
-        dayHigh: basePrice + Math.abs(change),
-        dayLow: basePrice - Math.abs(change),
-        volume: 1000000 + (h % 9000000),
-        marketCap: (h % 900 + 100) * 1e9,
-      };
-    });
+    const mockQuotes = symbols.map((s) => generateMockQuote(s));
     responseBody = JSON.stringify({ quotes: mockQuotes, isMock: true });
   }
 
