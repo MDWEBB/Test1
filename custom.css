@@ -1,0 +1,271 @@
+/* Nord Theme */
+body {
+  background-color: #2E3440;
+  color: #D8DEE9;
+  font-family: 'Helvetica Neue', sans-serif;
+  padding-bottom: 60px;
+  font-size: 22px; /* Optimized for 24" display */
+}
+
+.module {
+  background-color: rgba(46, 52, 64, 0.85);
+  color: #ECEFF4;
+  border-radius: 12px;
+  box-shadow: 0 0 12px rgba(136, 192, 208, 0.2);
+}
+
+/* Compact MMM-CountDown */
+.MMM-CountDown {
+  text-align: left;
+  padding: 6px 0;
+  margin-bottom: 4px;
+}
+
+/* Number of days */
+.MMM-CountDown .time {
+  font-size: 50px;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: 0.5px;
+  background: linear-gradient(90deg, #88C0D0, #81A1C1);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: none;
+  animation: none;   /* IMPORTANT: stops layout pulsing */
+  transform: none;
+}
+
+/* Event label */
+.MMM-CountDown .event {
+  font-size: 22px;
+  font-weight: 400;
+  margin-top: 2px;
+  color: #B48EAD;
+  text-transform: none;
+  letter-spacing: 0.3px;
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    text-shadow: 0 0 8px rgba(129, 161, 193, 0.3);
+    transform: scale(1);
+  }
+  50% {
+    text-shadow: 0 0 16px rgba(129, 161, 193, 0.5);
+    transform: scale(1.03);
+  }
+}
+
+/* ========================================
+   Google Sheets Module Styling
+   ======================================== */
+
+/* Remove default module styling for cleaner look */
+.MMM-GoogleSheets .module-content {
+  padding: 0 !important;
+  margin: 0 !important;
+  background-color: transparent !important;
+}
+
+/* Reduce blank space around Google Sheets */
+.MMM-GoogleSheets {
+  padding: 10px 15px !important;
+  background-color: rgba(46, 52, 64, 0.85) !important;
+}
+
+/* Make table seamless with Nord theme */
+.MMM-GoogleSheets table {
+  border-collapse: collapse !important;
+  width: 100% !important;
+  font-size: 16px !important;
+  line-height: 1.2 !important;
+  margin: 0 !important;
+  background-color: transparent !important;
+}
+
+.MMM-GoogleSheets td {
+  padding: 4px 10px !important;
+  border-bottom: 1px solid rgba(136, 192, 208, 0.15) !important;
+  background-color: transparent !important;
+  color: #ECEFF4 !important;
+}
+
+.MMM-GoogleSheets tr:last-child td {
+  border-bottom: none !important;
+}
+
+/* Style the day column (first column) */
+.MMM-GoogleSheets td:first-child {
+  font-weight: 600 !important;
+  color: #88C0D0 !important;
+  padding-right: 15px !important;
+  min-width: 90px !important;
+}
+
+/* Style the meal column (second column) */
+.MMM-GoogleSheets td:nth-child(2) {
+  color: #ECEFF4 !important;
+  font-weight: 400 !important;
+}
+
+/* Header styling to match theme */
+.MMM-GoogleSheets .module-header {
+  border-bottom: none !important;
+  margin-bottom: 6px !important;
+  font-size: 20px !important;
+  color: #88C0D0 !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.5px !important;
+  padding: 0 !important;
+  background-color: transparent !important;
+}
+
+/* Add subtle hover effect */
+.MMM-GoogleSheets tr:hover td {
+  background-color: rgba(136, 192, 208, 0.1) !important;
+}
+
+/* Force all text in Google Sheets to use Nord colors */
+.MMM-GoogleSheets * {
+  color: inherit !important;
+}
+
+.MMM-GoogleSheets tbody tr {
+  background-color: transparent !important;
+}
+
+/* ========================================
+   24" Display Optimizations
+   ======================================== */
+
+/* Optimize region widths and heights */
+.region.top.left,
+.region.top.right {
+  max-width: 500px;
+  padding: 20px;
+  max-height: 50vh; /* Constrain to top half of screen */
+  overflow: visible; /* Changed from auto - don't hide content */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+.region.top.center {
+  max-height: 50vh; /* Constrain center images to top half */
+}
+
+/* Make sure bottom bar takes up the bottom half */
+.region.bottom.bar {
+  max-height: 43vh; /* Reduced from 45vh to give top regions more room */
+  min-height: 43vh;
+  padding: 15px;
+  overflow: hidden; /* Prevent calendar from expanding beyond */
+}
+
+/* Constrain calendar to fit within its region */
+.MMM-CalendarExt3 {
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* Larger clock for 24" display */
+.module.clock .time {
+  font-size: 75px;
+  font-weight: 300;
+}
+
+.module.clock .date {
+  font-size: 28px;
+  margin-top: 8px;
+}
+
+/* Increase header sizes across all modules */
+header {
+  font-size: 24px; /* Reduced from 28px */
+  font-weight: 600;
+  margin-bottom: 12px; /* Reduced from 15px */
+}
+
+/* Calendar text sizing */
+.CX3 .event {
+  font-size: 17px;
+  line-height: 1.4;
+}
+
+.CX3 .eventTime {
+  font-size: 16px;
+}
+
+.CX3 .weekday {
+  font-size: 20px;
+}
+
+/* Weather module sizing */
+.MMM-OpenWeatherMapForecast {
+  font-size: 16px; /* Reduced from 19px */
+}
+
+.MMM-OpenWeatherMapForecast .day {
+  font-size: 15px; /* Reduced from 18px */
+}
+
+.MMM-OpenWeatherMapForecast .weather-icon {
+  width: 50px; /* Reduced from 60px */
+  height: 50px;
+}
+
+.MMM-OpenWeatherMapForecast .weather-forecast-row {
+  padding: 5px 0; /* Tighter spacing */
+}
+
+/* Image module optimization for 24" */
+.MMM-ImagesPhotos img {
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+/* ========================================
+   Additional Polish
+   ======================================== */
+
+/* Smooth transitions */
+.module {
+  transition: all 0.3s ease;
+}
+
+/* Better spacing between modules */
+.module {
+  margin-bottom: 15px; /* Reduced from 25px */
+}
+
+/* Calendar bottom bar optimization */
+.region.bottom.bar {
+  padding: 15px;
+}
+
+/* Ensure text is crisp on large display */
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ========================================
+   Module Ordering - Meal Plan Below Weather
+   ======================================== */
+
+/* Force Weekly Meal Plan to appear below weather in top_right */
+.region.top.right {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ensure weather module comes first */
+.MMM-OpenWeatherMapForecast {
+  order: 1;
+}
+
+/* Then the meal plan with spacing */
+.region.top.right .MMM-GoogleSheets {
+  order: 2;
+  margin-top: 20px;
+}
