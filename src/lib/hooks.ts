@@ -23,7 +23,8 @@ const FAILURE_RESET_TIME = 60_000; // Reset failure count after 1 minute
 const cache: Record<string, CacheEntry> = {};
 let globalFailCount = 0;
 let lastFailureTime = 0;
-let activeFetch: Promise<CacheEntry | null> | null = null;
+// Track active fetches per ticker set to avoid race conditions
+const activeFetches: Record<string, Promise<CacheEntry | null>> = {};
 
 async function fetchStockData(tickersKey: string): Promise<CacheEntry | null> {
   // Return cached data if fresh
@@ -44,12 +45,13 @@ async function fetchStockData(tickersKey: string): Promise<CacheEntry | null> {
     return cached;
   }
 
-  // If a fetch is already in flight, wait for it instead of starting another
-  if (activeFetch) {
-    return activeFetch;
+  // If a fetch is already in flight for this ticker set, wait for it
+  const existingFetch = activeFetches[tickersKey];
+  if (existingFetch) {
+    return existingFetch;
   }
 
-  activeFetch = (async () => {
+  activeFetches[tickersKey] = (async () => {
     try {
       const res = await fetch(`/api/stocks?tickers=${tickersKey}`);
       const data = await res.json();
@@ -75,11 +77,11 @@ async function fetchStockData(tickersKey: string): Promise<CacheEntry | null> {
       lastFailureTime = Date.now();
       return cache[tickersKey] || null;
     } finally {
-      activeFetch = null;
+      delete activeFetches[tickersKey];
     }
   })();
 
-  return activeFetch;
+  return activeFetches[tickersKey];
 }
 
 // ─── React hook (thin wrapper around the cache) ─────────────────────
