@@ -299,6 +299,17 @@ export default function InvestPage() {
       {/* Suggestions */}
       {budget > 0 && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+          {/* Debug info - remove after fixing */}
+          <details className="mb-4 text-xs text-zinc-500">
+            <summary className="cursor-pointer hover:text-zinc-300">Debug Info</summary>
+            <div className="mt-2 space-y-1 font-mono bg-zinc-800 p-2 rounded">
+              <p>Loading: {String(loading)}</p>
+              <p>Quotes keys: {Object.keys(quotes).join(", ") || "(empty)"}</p>
+              <p>Sample prices: {Object.entries(quotes).slice(0, 3).map(([k, v]) => `${k}: $${v.price}`).join(", ") || "(none)"}</p>
+              <p>Suggested ETF tickers: {SUGGESTED_ETFS.filter(e => e.market === "ASX").map(e => e.ticker).join(", ")}</p>
+            </div>
+          </details>
+
           <div className="mb-3 flex items-center justify-between">
             <h2 className="font-semibold text-white">
               Suggested Allocation
